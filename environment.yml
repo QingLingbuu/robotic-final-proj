@@ -1,0 +1,17 @@
+name: robotic-final
+channels:
+  - defaults
+  - conda-forge
+  - pytorch
+dependencies:
+  - python=3.10
+  - numpy=1.26.4
+  - opencv-python=4.8.0.76
+  - pyyaml=6.0.1
+  - tqdm=4.66.2
+  - pytorch=2.1.0
+  - torchvision=0.16.0
+  - pip
+  - pip:
+      - robosuite==1.5.2
+      - transformers==4.37.2

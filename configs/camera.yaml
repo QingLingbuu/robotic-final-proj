@@ -1,0 +1,8 @@
+# Camera intrinsics configuration
+# Typically these values are calibrated for your specific camera
+fx: 525.0  # Focal length in x direction
+fy: 525.0  # Focal length in y direction
+cx: 319.5  # Principal point x coordinate
+cy: 239.5  # Principal point y coordinate
+width: 640  # Image width in pixels
+height: 480  # Image height in pixels
