@@ -87,7 +87,7 @@ detected_objects = {
 
 *   **Obstacle Limit:** Maximum 16 entries. If DINO detects more, sort by `conf` and truncate. Exceeding 16 bloats IPC latency and FSM processing overhead.
 *   **Clock Source:** `timestamp` **must** use `time.monotonic()`, NOT `time.time()`, to prevent logic skew from system clock jumps.
-*   **Confidence Threshold (`CONF_THRESH`):** Must be centralized in `configs/thresholds.yaml`. If `conf < CONF_THRESH`, `perception` must set `status = "error"` and the FSM must NOT use the target position.
+*   **Confidence Threshold (`CONF_THRESHOLD`):** Must be centralized in `configs/thresholds.yaml`. If `conf < CONF_THRESHOLD`, `perception` must set `status = "error"` and the FSM must NOT use the target position.
 
 ### 2.4 FSM State Machine (Transitions & Fallbacks)
 | State | Normal | Exception | Fallback |
@@ -148,6 +148,7 @@ Logs must capture the exact environment to allow exact experiment replication.
 ## 6. Git Hygiene & Release Flow
 *   **Message Format:** `<group>/<scope>: <verb> <what>`. 
     *   Example: `logic/fsm: fix RETRY_SENSING counter overflow`
+*   **Source-Only Commits (Hard Rule):** Commits and pushes must include source and project files only. Never commit runtime artifacts such as `.venv/`, `__pycache__/`, `*.pyc`, local caches, or other generated files.
 *   **Branch Strategy:**
     *   `main`: Stable, runnable.
     *   `feat/<group>-<feature>`: Feature dev.
@@ -161,5 +162,5 @@ Logs must capture the exact environment to allow exact experiment replication.
     5. `detected_objects` schema intact? ✅
 *   **Verification Checklist — Before Evaluation Run:**
     - [ ] `eval/` run log template includes `scene_config` + `commit_hash` ✅
-    - [ ] `CONF_THRESH` sourced from `configs/thresholds.yaml`, not hardcoded ✅
+    - [ ] `CONF_THRESHOLD` sourced from `configs/thresholds.yaml`, not hardcoded ✅
     - [ ] Queue `get(timeout=0.2)` stale handling in place ✅

@@ -17,28 +17,31 @@ $$X_c = \frac{(u - c_x) \cdot d}{f_x}, \quad Y_c = \frac{(v - c_y) \cdot d}{f_y}
 随后利用外参矩阵 $T_{world\_cam}$ 变换至世界坐标系：
 $$P_{world} = R_{wc} \cdot P_{cam} + t_{wc}$$
 
-### 1.2 异步感知与 SharedMemory 通信 (性能优化)
-为保证 FSM 逻辑不被重型感知模型（GroundingDINO）阻塞，采用跨进程共享内存方案。
+### 1.2 异步感知与 Queue 通信 (规范对齐)
+为保证 FSM 逻辑不被重型感知模型（GroundingDINO）阻塞，采用 `multiprocessing.Queue` 的异步通信方案（队列名固定为 `perception_queue`）。
 
 **参考实现架构：**
 ```python
-from multiprocessing import shared_memory
-import numpy as np
+from multiprocessing import Queue
+from queue import Empty
+
+# 全局队列命名约定
+perception_queue = Queue(maxsize=8)
 
 # --- 感知组 (写入进程) ---
-# 创建大小为 1024 字节的共享内存空间
-shm = shared_memory.SharedMemory(name="perception_shm", create=True, size=1024)
-# 映射为 numpy 数组进行快速写入
-shared_data = np.ndarray((3,), dtype=np.float32, buffer=shm.buf)
-# 更新坐标: shared_data[:] = [x, y, z]
+detected_objects = {
+    "target": {"label": "knife", "pos": [x, y, z], "conf": 0.95, "timestamp": ts},
+    "obstacles": [{"label": "cup", "pos": [x, y, z], "id": 101}],
+    "status": "ready",
+}
+perception_queue.put(detected_objects)
 
 # --- 逻辑组 (读取进程) ---
 try:
-    existing_shm = shared_memory.SharedMemory(name="perception_shm")
-    current_pos = np.ndarray((3,), dtype=np.float32, buffer=existing_shm.buf)
-    # 读取坐标: target_pos = current_pos.copy()
-except FileNotFoundError:
-    print("等待感知组初始化共享内存...")
+    detected_objects = perception_queue.get(timeout=0.2)
+except Empty:
+    # stale data -> FSM 进入 RETRY_SENSING
+    detected_objects = None
 ```
 
 ---
@@ -86,7 +89,7 @@ detected_objects = {
 ## 5. 开发里程碑 (Milestones)
 
 1.  **T+3天 (Interface Demo)**：完成反投影数学模型校准，环境能同时渲染 RGB 和 Depth。
-2.  **T+7天 (Vision-Loop)**：实现基于 SharedMemory 的异步感知流，完成单臂抓取实验。
+2.  **T+7天 (Vision-Loop)**：实现基于 `perception_queue` 的异步感知流，完成单臂抓取实验。
 3.  **T+12天 (Final Evaluation)**：完成 RoboCasa 双臂协作任务测试，导出故障分类统计表。
 
 ---
@@ -100,7 +103,7 @@ detected_objects = {
 ---
 
 ### 🚀 今日行动建议
-1.  **感知组**：将 `SharedMemory` 逻辑集成到 GroundingDINO 推理脚本中。
+1.  **感知组**：将 `perception_queue` 写入逻辑集成到 GroundingDINO 推理脚本中。
 2.  **执行组**：测试 `arm_safe_retract()`，确保任何时候调用都能让手臂瞬间回到初始待机点。
 3.  **逻辑组**：在 FSM 中加入 `Counter` 变量，用于记录 Failure Mode 中的三类 RETRY 次数。
 

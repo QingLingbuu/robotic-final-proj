@@ -1,0 +1,57 @@
+终端指令指南（Windows PowerShell）
+
+[1] 最短启动验证
+
+.\.venv\Scripts\Activate.ps1
+python main.py
+
+[2] 每次 Git 使用指南（推荐顺序）
+0) 可选：先看当前状态
+git status
+
+1) 拉取最新代码（避免在旧代码上提交）
+git pull --rebase origin main
+
+2) 查看改动（确认只包含源码/文档，不包含 .venv、__pycache__ 等）
+git status
+git diff
+
+3) 暂存改动（按需选择）
+- 暂存全部（谨慎）：
+git add .
+- 或只暂存指定文件（推荐）：
+git add AGENTS.md README.md requirements.txt .gitignore
+
+4) 提交
+git commit -m "<group>/<scope>: <verb> <what>"
+示例：
+git commit -m "logic/fsm: fix retry sensing transition"
+
+5) 推送
+git push origin main
+
+
+[3] 常用补充命令
+- 查看提交历史（简洁）
+git log --oneline -n 10
+
+- 取消某文件暂存（不删工作区改动）
+git restore --staged <file>
+
+- 丢弃某文件工作区改动（慎用）
+git restore <file>
+
+- 新建功能分支并切换（推荐开发时）
+git checkout -b feat/<group>-<feature>
+
+
+[4] 快速提交模板（可直接照抄）
+cd D:\pyCode\robot\final\robotic-final-proj
+.\.venv\Scripts\Activate.ps1
+python main.py
+
+git pull --rebase origin main
+git status
+git add <your_files>
+git commit -m "infra/docs: update terminal workflow guide"
+git push origin main
