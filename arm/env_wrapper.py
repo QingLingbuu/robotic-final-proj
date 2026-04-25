@@ -29,6 +29,15 @@ class RobosuiteEnvWrapper:
         self.camera_config = camera_config or {}
         self.env = suite.make(**default_config)
         self.obs = self.env.reset()
+        self.action_dim = self.env.action_dim
+        self.home_eef_positions = self._capture_eef_positions()
+        self._viewer = None
+
+    def _capture_eef_positions(self):
+        return {
+            "robot0": np.array(self.obs["robot0_eef_pos"], dtype=float).copy(),
+            "robot1": np.array(self.obs["robot1_eef_pos"], dtype=float).copy(),
+        }
 
     def get_observation(self):
         """Get current observation from environment."""
@@ -36,15 +45,22 @@ class RobosuiteEnvWrapper:
         depth = self.obs["frontview_depth"]
 
         proprioception = {
-            "arm1_eef_pos": self.obs["robot0_eef_pos"],
-            "arm1_eef_quat": self.obs["robot0_eef_quat"],
-            "arm1_joints": self.obs["robot0_joint_pos"],
-            "arm2_eef_pos": self.obs["robot1_eef_pos"],
-            "arm2_eef_quat": self.obs["robot1_eef_quat"],
-            "arm2_joints": self.obs["robot1_joint_pos"],
+            "robot0_eef_pos": self.obs["robot0_eef_pos"],
+            "robot0_eef_quat": self.obs["robot0_eef_quat"],
+            "robot0_joint_pos": self.obs["robot0_joint_pos"],
+            "robot1_eef_pos": self.obs["robot1_eef_pos"],
+            "robot1_eef_quat": self.obs["robot1_eef_quat"],
+            "robot1_joint_pos": self.obs["robot1_joint_pos"],
+            "robot0_gripper_qpos": self.obs["robot0_gripper_qpos"],
+            "robot1_gripper_qpos": self.obs["robot1_gripper_qpos"],
         }
 
         return rgb, depth, proprioception
+
+    def step(self, action):
+        """Execute action and return observation."""
+        self.obs, reward, done, info = self.env.step(action)
+        return self.obs, reward, done, info
 
     def get_camera_intrinsics(self):
         """Return intrinsics from config or a future runtime camera API."""
@@ -57,6 +73,54 @@ class RobosuiteEnvWrapper:
             "or a runtime RoboCamera API."
         )
 
+    def get_object_dynamics_summary(self):
+        """Return a lightweight MuJoCo summary for object mobility checks."""
+        model = self.env.sim.model
+        summary = {
+            "matching_bodies": [],
+            "matching_joints": [],
+        }
+
+        body_names = getattr(model, "body_names", [])
+        body_mass = getattr(model, "body_mass", [])
+        for body_id, body_name in enumerate(body_names):
+            lowered = body_name.lower()
+            if "pot" in lowered or "object" in lowered or "cube" in lowered:
+                mass = None
+                if body_id < len(body_mass):
+                    mass = float(body_mass[body_id])
+                summary["matching_bodies"].append(
+                    {
+                        "name": body_name,
+                        "mass": mass,
+                    }
+                )
+
+        joint_names = getattr(model, "joint_names", [])
+        joint_type = getattr(model, "jnt_type", [])
+        joint_type_names = {
+            0: "free",
+            1: "ball",
+            2: "slide",
+            3: "hinge",
+        }
+        for joint_id, joint_name in enumerate(joint_names):
+            lowered = joint_name.lower()
+            if "pot" in lowered or "object" in lowered or "cube" in lowered:
+                raw_type = None
+                type_name = None
+                if joint_id < len(joint_type):
+                    raw_type = int(joint_type[joint_id])
+                    type_name = joint_type_names.get(raw_type, str(raw_type))
+                summary["matching_joints"].append(
+                    {
+                        "name": joint_name,
+                        "type": type_name,
+                    }
+                )
+
+        return summary
+
     def apply_action(self, arm1_pos, arm2_pos):
         """Apply a joint-space action to both arms."""
         action = np.concatenate([arm1_pos, arm2_pos])
@@ -65,7 +129,7 @@ class RobosuiteEnvWrapper:
 
     def arm_safe_retract(self):
         """Return both arms to a neutral zero-action pose immediately."""
-        action = np.zeros(self.env.action_dim)
+        action = np.zeros(self.action_dim)
         self.obs, _, _, _ = self.env.step(action)
         for _ in range(10):
             self.obs, _, _, _ = self.env.step(action)
@@ -73,6 +137,7 @@ class RobosuiteEnvWrapper:
     def reset(self):
         """Reset the environment and return the first observation."""
         self.obs = self.env.reset()
+        self.home_eef_positions = self._capture_eef_positions()
         return self.get_observation()
 
     def render(self):
