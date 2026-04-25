@@ -1,4 +1,4 @@
 # Grasping and execution thresholds
-CONF_THRESHOLD: 0.8    # Minimum confidence for object detection/grasping
+CONF_THRESH: 0.8       # Minimum confidence for object detection/grasping
 TIMEOUT_SECONDS: 60    # Maximum time allowed for planning/execution
 MAX_RETRIES: 3         # Maximum retries for failed grasps
