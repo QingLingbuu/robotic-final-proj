@@ -1,0 +1,25 @@
+backend: grounding_dino
+model_id: IDEA-Research/grounding-dino-tiny
+device: cpu
+local_files_only: true
+box_threshold: 0.35
+text_threshold: 0.25
+target_labels:
+  - pot
+  - object
+  - cube
+obstacle_labels:
+  - cup
+  - bottle
+  - bowl
+  - can
+  - block
+max_obstacles: 16
+depth_sample_radius: 2
+publish_period_sec: 0.2
+initial_publish_timeout_sec: 30.0
+dual_grasp_lateral_offset: 0.065
+dual_grasp_height_offset: -0.04
+use_sim_height_correction: true
+sim_xy_correction_alpha: 0.75
+dual_grasp_axis: y

@@ -25,6 +25,7 @@ PLACE_SETTLE_STEPS = 40
 PUSH_APPROACH_DISTANCE = 0.12
 PUSH_THROUGH_DISTANCE = 0.20
 PUSH_SURFACE_MARGIN = 0.04
+VISUAL_DUAL_GRASP_MIN_SPAN = 0.06
 
 
 def compute_grasp_waypoints(target_pos):
@@ -73,6 +74,47 @@ def compute_push_waypoints(obstacle_pos, direction):
         obstacle_pos[2],
     ]
     return push_start, push_end
+
+
+def compute_visual_dual_grasp_targets(
+    target_pos,
+    robot0_eef_pos,
+    robot1_eef_pos,
+    lateral_offset,
+    vertical_offset=HANDLE_GRASP_Z_OFFSET,
+    axis_mode="robots",
+):
+    """Infer two symmetric grasp points around a target from current arm layout."""
+    target_pos = np.array(target_pos, dtype=float)
+    robot0_eef_pos = np.array(robot0_eef_pos, dtype=float)
+    robot1_eef_pos = np.array(robot1_eef_pos, dtype=float)
+
+    axis_mode = str(axis_mode).strip().lower()
+    if axis_mode == "x":
+        span_axis = np.array([1.0, 0.0], dtype=float)
+    elif axis_mode == "y":
+        span_axis = np.array([0.0, 1.0], dtype=float)
+    else:
+        span_axis = robot1_eef_pos[:2] - robot0_eef_pos[:2]
+        span_norm = np.linalg.norm(span_axis)
+        if span_norm < 1e-6:
+            span_axis = np.array([0.0, 1.0], dtype=float)
+        else:
+            span_axis = span_axis / span_norm
+
+    span = max(float(lateral_offset), VISUAL_DUAL_GRASP_MIN_SPAN)
+    left_xy = target_pos[:2] - span_axis * (span / 2.0)
+    right_xy = target_pos[:2] + span_axis * (span / 2.0)
+
+    left_target = np.array(
+        [left_xy[0], left_xy[1], target_pos[2] + float(vertical_offset)],
+        dtype=float,
+    )
+    right_target = np.array(
+        [right_xy[0], right_xy[1], target_pos[2] + float(vertical_offset)],
+        dtype=float,
+    )
+    return left_target, right_target
 
 
 def move_to_waypoint(env, target_eef_pos, arm_idx=0):

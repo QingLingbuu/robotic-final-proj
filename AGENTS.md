@@ -40,6 +40,7 @@ To prevent multiple agents from stepping on each other, follow strict routing ru
 
 ### 1.3 Pull Requests (PR)
 *   **Atomic Changes:** One PR = One logical change. Never mix a bugfix with a refactoring or a new feature.
+*   **Task Summary Sync (Hard Rule):** If a change affects project status, completed work, next-step priorities, or remaining tasks, the agent **must** update `docs/task.md` in the same branch / PR. Do not let implementation progress and project-task documentation drift apart.
 *   **PR Body Template:** Every PR must include Goal and Verification sections:
     ```markdown
     ## Goal
@@ -162,6 +163,7 @@ Logs must capture the exact environment to allow exact experiment replication.
     3. No hardcoded intrinsics? ✅
     4. `perception_queue` interface unchanged? ✅
     5. `detected_objects` schema intact? ✅
+    6. `docs/task.md` updated if project status / roadmap / task inventory changed? ✅
 *   **Verification Checklist — Before Evaluation Run:**
     - [ ] `eval/` run log template includes `scene_config` + `commit_hash` ✅
     - [ ] `CONF_THRESHOLD` sourced from `configs/thresholds.yaml`, not hardcoded ✅
