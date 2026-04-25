@@ -4,6 +4,8 @@
 **Version:** V3.4 (2026-04)
 **Status:** Interface Controlled. Breaking changes require explicit `[BREAKING CHANGE]` tags and full-group review.
 
+**Platform Strategy:** The project goal remains a RoboCasa-style household tidying task, but the current implementation baseline is `robosuite`. The team should first validate perception / IPC / FSM / execution interfaces on `robosuite`, then migrate the environment layer to RoboCasa once the core pipeline is stable. During migration, keep `vision/`, `ipc/`, `fsm/`, and `logs/` interfaces as stable as possible and treat the environment wrapper as the primary swap boundary.
+
 ## 0. Karpathy Directives (The Four Rules)
 All agents must internalize these rules across *every* action: coding, reviewing, committing, commenting, and collaborating.
 
