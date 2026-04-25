@@ -13,7 +13,7 @@ class RobosuiteEnvWrapper:
             "env_name": "TwoArmLift",
             "robots": ["Panda", "Panda"],
             "env_configuration": "parallel",
-            "has_renderer": False,
+            "has_renderer": True,
             "has_offscreen_renderer": True,
             "use_camera_obs": True,
             "use_object_obs": True,

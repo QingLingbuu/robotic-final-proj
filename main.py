@@ -62,6 +62,15 @@ def main():
     env.arm_safe_retract()
     print("  Arm retract executed")
 
+    print("\nKeeping render window open...")
+    print("Press Ctrl+C to exit, or window will stay open.")
+    try:
+        while True:
+            env.render()
+            time.sleep(0.03)
+    except KeyboardInterrupt:
+        print("\nExiting...")
+
     if task_completed:
         fsm.transition_to(State.SUCCESS)
 
