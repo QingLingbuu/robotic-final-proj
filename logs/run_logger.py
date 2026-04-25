@@ -49,9 +49,10 @@ def build_run_log(
     counts,
     duration_sec,
     context,
+    execution_summary=None,
 ):
     """Build a run log matching the required JSON schema."""
-    return {
+    run_log = {
         "run_id": run_id,
         "commit_hash": get_commit_hash(),
         "config_version": config_version,
@@ -66,6 +67,9 @@ def build_run_log(
         "duration_sec": float(duration_sec),
         "context": context,
     }
+    if execution_summary is not None:
+        run_log["execution_summary"] = execution_summary
+    return run_log
 
 
 def write_run_log(run_log, output_dir="logs"):

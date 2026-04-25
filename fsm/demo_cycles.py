@@ -1,9 +1,9 @@
 """Minimal demo cycle drivers for perception, clearing, and grasp paths."""
 
-from ipc.perception_queue import Empty, read_detected_objects
-from vision.detected_objects import validate_detected_objects
-from vision.perception_loop import publish_demo_detection
+from ipc.perception_queue import publish_detected_objects
+from vision.detected_objects import build_detected_objects
 
+from fsm.perception_cycle import consume_perception_queue
 from fsm.state_machine import State
 
 
@@ -57,39 +57,32 @@ def run_perception_cycle(fsm, perception_queue, conf_thresh, label, target_conf,
     print(f"\nRunning perception cycle: {label}")
 
     if publish_sample:
-        detected_objects = publish_demo_detection(
-            perception_queue=perception_queue,
+        detected_objects = build_detected_objects(
             conf_thresh=conf_thresh,
+            target_label="demo_target",
+            target_pos=[0.0, 0.0, 0.5],
             target_conf=target_conf,
+            obstacles=[
+                {
+                    "label": "demo_obstacle_0",
+                    "pos": [0.2, 0.0, 0.4],
+                    "id": 1,
+                    "conf": 0.8,
+                }
+            ],
+            status="ready",
         )
+        publish_detected_objects(perception_queue, detected_objects)
         print(
             "  Published payload with "
             f"status={detected_objects['status']} "
             f"and conf={detected_objects['target']['conf']:.2f}"
         )
 
-    try:
-        latest_detection = read_detected_objects(perception_queue)
-    except Empty:
-        print("  Queue read timed out; routing to RETRY_SENSING.")
-        fsm.handle_perception_timeout()
+    _, cycle_ok = consume_perception_queue(fsm, perception_queue)
+    if not cycle_ok:
         return False
 
-    if not validate_detected_objects(latest_detection):
-        print("  Payload schema invalid; routing to RETRY_SENSING.")
-        fsm.handle_invalid_perception()
-        return False
-
-    if latest_detection["status"] != "ready":
-        print(
-            "  Payload not ready "
-            f"(status={latest_detection['status']}); routing to RETRY_SENSING."
-        )
-        fsm.handle_invalid_perception()
-        return False
-
-    print("  Payload valid and ready; transitioning to CLEARING.")
-    fsm.transition_to(State.CLEARING)
     fsm.transition_to(State.PLANNING)
     return True
 
@@ -129,7 +122,7 @@ def build_run_context(fsm, task_completed):
     """Summarize the final loop outcome for the experiment log."""
     state = fsm.get_current_state()
     if task_completed:
-        return "Perception, clearing, and grasp demo cycles completed without retries."
+        return "Perception, clearing, and grasp cycles completed without retries."
     if state == State.FAILED:
         return "Retry budget exhausted while handling invalid or stale perception data."
     if state == State.EMERGENCY:

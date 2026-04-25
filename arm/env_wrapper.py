@@ -73,6 +73,21 @@ class RobosuiteEnvWrapper:
             "or a runtime RoboCamera API."
         )
 
+    def get_camera_extrinsics(self):
+        """Return T_world_cam from config until the runtime camera API is wired in."""
+        transform = self.camera_config.get("T_world_cam")
+        if transform is None:
+            raise ValueError(
+                "Camera extrinsics must come from configs/camera.yaml "
+                "or a runtime RoboCamera API."
+            )
+
+        rotation = np.array(transform["rotation"], dtype=float)
+        translation = np.array(transform["translation"], dtype=float)
+        if rotation.shape != (3, 3) or translation.shape != (3,):
+            raise ValueError("T_world_cam must contain a 3x3 rotation and 3D translation.")
+        return rotation, translation
+
     def get_object_dynamics_summary(self):
         """Return a lightweight MuJoCo summary for object mobility checks."""
         model = self.env.sim.model

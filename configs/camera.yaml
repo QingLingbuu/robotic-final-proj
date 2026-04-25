@@ -6,3 +6,9 @@ cx: 319.5  # Principal point x coordinate
 cy: 239.5  # Principal point y coordinate
 width: 640  # Image width in pixels
 height: 480  # Image height in pixels
+T_world_cam:
+  rotation:
+    - [1.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0]
+    - [0.0, 0.0, 1.0]
+  translation: [0.0, 0.0, 0.0]
