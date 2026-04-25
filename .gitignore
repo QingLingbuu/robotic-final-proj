@@ -1,6 +1,11 @@
 # Python virtual environments
 .venv/
 venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.idea/
+.vscode/
 
 # Python cache/artifacts
 __pycache__/
