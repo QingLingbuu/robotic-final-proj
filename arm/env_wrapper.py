@@ -65,7 +65,9 @@ class RobosuiteEnvWrapper:
 
         try:
             self.obs, reward, done, info = self.env.step(action)
-        except ValueError:
+        except ValueError as exc:
+            if "executing action in terminated episode" not in str(exc):
+                raise
             self._episode_terminated = True
             return self.obs, 0.0, True, {}
 
@@ -161,17 +163,13 @@ class RobosuiteEnvWrapper:
             return False
 
         action = np.zeros(self.action_dim)
-        try:
+        self.obs, _, done, _ = self.step(action)
+        if done:
+            return False
+        for _ in range(10):
             self.obs, _, done, _ = self.step(action)
             if done:
                 return False
-            for _ in range(10):
-                self.obs, _, done, _ = self.step(action)
-                if done:
-                    return False
-        except ValueError:
-            self._episode_terminated = True
-            return False
         return True
 
     def reset(self):

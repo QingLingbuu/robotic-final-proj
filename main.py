@@ -45,7 +45,6 @@ DUAL_SLIP_FAILURE_STAGES = {
     "verify_lift",
     "verify_grasp",
     "verify_place",
-    "open_grippers",
 }
 DUAL_DRIFT_FAILURE_STAGES = {
     "transit",
@@ -100,11 +99,15 @@ def refresh_detection_for_retry(env, perception_loop, perception_queue):
         return None
 
     rgb, depth, _ = env.get_observation()
-    return perception_loop.publish_from_observation(
-        perception_queue=perception_queue,
-        rgb_image=rgb,
-        depth_image=depth,
-    )
+    try:
+        return perception_loop.publish_from_observation(
+            perception_queue=perception_queue,
+            rgb_image=rgb,
+            depth_image=depth,
+        )
+    except Exception as exc:
+        print(f"Vision refresh during retry unavailable: {exc}")
+        return None
 
 
 def classify_dual_grasp_failure(execution_summary):
