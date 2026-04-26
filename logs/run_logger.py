@@ -18,7 +18,7 @@ def get_commit_hash():
     return output.strip() or "unknown"
 
 
-def infer_failure_mode(counts):
+def infer_failure_mode(counts, execution_summary=None):
     """Map retry counters to the required failure mode strings."""
     if counts["n2"] > 0:
         return "execution_drift"
@@ -26,10 +26,15 @@ def infer_failure_mode(counts):
         return "physical_slip"
     if counts["n1"] > 0:
         return "perception_error"
+    if execution_summary:
+        for key in ("push_failure_mode", "grasp_failure_mode"):
+            mode = execution_summary.get(key)
+            if mode in {"execution_drift", "physical_slip", "perception_error"}:
+                return mode
     return "success"
 
 
-def infer_failure_modes_triggered(counts):
+def infer_failure_modes_triggered(counts, execution_summary=None):
     """Return every failure mode triggered during the run."""
     modes = []
     if counts["n1"] > 0:
@@ -38,6 +43,11 @@ def infer_failure_modes_triggered(counts):
         modes.append("execution_drift")
     if counts["n3"] > 0:
         modes.append("physical_slip")
+    if execution_summary:
+        for key in ("push_failure_mode", "grasp_failure_mode"):
+            mode = execution_summary.get(key)
+            if mode in {"execution_drift", "physical_slip", "perception_error"} and mode not in modes:
+                modes.append(mode)
     return modes
 
 
@@ -59,9 +69,13 @@ def build_run_log(
         "scene_config": scene_config,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "success": bool(success),
-        "failure_mode": infer_failure_mode(counts) if not success else "success",
+        "failure_mode": (
+            infer_failure_mode(counts, execution_summary) if not success else "success"
+        ),
         "failure_modes_triggered": (
-            [] if success else infer_failure_modes_triggered(counts)
+            []
+            if success
+            else infer_failure_modes_triggered(counts, execution_summary)
         ),
         "counts": counts,
         "duration_sec": float(duration_sec),

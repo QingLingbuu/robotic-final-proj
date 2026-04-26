@@ -32,6 +32,7 @@ class RobosuiteEnvWrapper:
         self.action_dim = self.env.action_dim
         self.home_eef_positions = self._capture_eef_positions()
         self._viewer = None
+        self._episode_terminated = False
 
     def _capture_eef_positions(self):
         return {
@@ -59,8 +60,21 @@ class RobosuiteEnvWrapper:
 
     def step(self, action):
         """Execute action and return observation."""
-        self.obs, reward, done, info = self.env.step(action)
+        if self._episode_terminated:
+            return self.obs, 0.0, True, {}
+
+        try:
+            self.obs, reward, done, info = self.env.step(action)
+        except ValueError:
+            self._episode_terminated = True
+            return self.obs, 0.0, True, {}
+
+        self._episode_terminated = bool(done)
         return self.obs, reward, done, info
+
+    def is_episode_terminated(self):
+        """Return whether the underlying robosuite episode has terminated."""
+        return bool(self._episode_terminated)
 
     def get_camera_intrinsics(self):
         """Return intrinsics from config or a future runtime camera API."""
@@ -139,20 +153,32 @@ class RobosuiteEnvWrapper:
     def apply_action(self, arm1_pos, arm2_pos):
         """Apply a joint-space action to both arms."""
         action = np.concatenate([arm1_pos, arm2_pos])
-        self.obs, reward, done, info = self.env.step(action)
-        return self.obs, reward, done, info
+        return self.step(action)
 
     def arm_safe_retract(self):
         """Return both arms to a neutral zero-action pose immediately."""
+        if self._episode_terminated:
+            return False
+
         action = np.zeros(self.action_dim)
-        self.obs, _, _, _ = self.env.step(action)
-        for _ in range(10):
-            self.obs, _, _, _ = self.env.step(action)
+        try:
+            self.obs, _, done, _ = self.step(action)
+            if done:
+                return False
+            for _ in range(10):
+                self.obs, _, done, _ = self.step(action)
+                if done:
+                    return False
+        except ValueError:
+            self._episode_terminated = True
+            return False
+        return True
 
     def reset(self):
         """Reset the environment and return the first observation."""
         self.obs = self.env.reset()
         self.home_eef_positions = self._capture_eef_positions()
+        self._episode_terminated = False
         return self.get_observation()
 
     def render(self):
