@@ -255,3 +255,4 @@
 - Push is again part of final evaluation via `REQUIRE_PUSH_TEST_SUCCESS = True`; push failures count as execution drift and make the integration run fail.
 - Changed dual-arm release from an in-air open to a surface-aware place sequence: carry high, descend until the object is near the configured place-table height, partially open, retract outward/upward, then fully open.
 - Updated push execution to approach open from above, descend to a contact waypoint, briefly close for a stable pushing surface, then push through the target direction.
+- The current arm motion strategy uses segmented, stepwise waypoint moves for stability during dual-arm carry and release. This can make the arms feel more hesitant or "stuck" than a larger-step controller, so a future follow-up may restore larger move steps once contact stability is confirmed.
