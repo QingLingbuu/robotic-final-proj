@@ -567,16 +567,22 @@ def main():
     fx, fy, cx, cy = env.get_camera_intrinsics()
     print(f"\nCamera intrinsics: fx={fx}, fy={fy}, cx={cx}, cy={cy}")
 
-    perception_queue = create_perception_queue()
-    print(f"\nInitialized {PERCEPTION_QUEUE_NAME}.")
-
-    perception_loop, perception_worker, latest_detection = initialize_vision_system(
-        env=env,
-        camera_config=camera_config,
-        vision_config=vision_config,
-        conf_thresh=conf_thresh,
-        perception_queue=perception_queue,
-    )
+    perception_queue = None
+    perception_loop = None
+    perception_worker = None
+    latest_detection = None
+    if VISION_OFF:
+        print("\nVISION_OFF is enabled; skipping vision model initialization.")
+    else:
+        perception_queue = create_perception_queue()
+        print(f"\nInitialized {PERCEPTION_QUEUE_NAME}.")
+        perception_loop, perception_worker, latest_detection = initialize_vision_system(
+            env=env,
+            camera_config=camera_config,
+            vision_config=vision_config,
+            conf_thresh=conf_thresh,
+            perception_queue=perception_queue,
+        )
 
     fsm = TaskStateMachine()
     execution_summary = build_execution_summary()
@@ -774,85 +780,79 @@ def main():
 
     print("\n--- TEST 2: real push control ---")
     if getattr(env, "is_episode_terminated", lambda: False)():
-        print("  Skipping push test because episode already terminated.")
-        push_success = False
-        execution_summary["push_failure_mode"] = "execution_drift"
-        push_episode_summary["success"] = False
-        push_episode_summary["failure_mode"] = "execution_drift"
-        push_episode_summary["reset_before_episode"] = True
+        print("  Grasp episode already terminated; starting a fresh push episode anyway.")
+    env.reset()
+    push_episode_summary["reset_before_episode"] = True
+    refreshed_detection = latest_detection
+    if VISION_OFF:
+        push_target_pos = get_primary_object_pos(env.obs)
+        push_source = "environment observation"
     else:
-        env.reset()
-        push_episode_summary["reset_before_episode"] = True
-        refreshed_detection = latest_detection
-        if VISION_OFF:
-            push_target_pos = get_primary_object_pos(env.obs)
-            push_source = "environment observation"
-        else:
-            push_target_pos = get_obstacle_pos_from_detection(refreshed_detection)
-            push_source = "vision obstacle"
-        if push_target_pos is None and perception_loop is not None and not VISION_OFF:
-            try:
-                rgb, depth, _ = env.get_observation()
-                refreshed_detection = perception_loop.publish_from_observation(
-                    perception_queue=perception_queue,
-                    rgb_image=rgb,
-                    depth_image=depth,
-                )
-                push_target_pos = get_obstacle_pos_from_detection(refreshed_detection)
-            except Exception as exc:
-                print(f"Vision refresh before push unavailable: {exc}")
-        if push_target_pos is None:
-            push_target_pos = get_primary_object_pos(env.obs)
-            push_source = "environment observation"
-        if push_target_pos is None:
-            raise RuntimeError("No object position found in robosuite observations.")
-        execution_summary["push_source"] = push_source
-        push_episode_summary["source"] = push_source
-        push_episode_summary["target_pos"] = [
-            float(value) for value in np.array(push_target_pos, dtype=float).tolist()
-        ]
-        print(f"Push target source: {push_source}")
-        print(f"Object pos before push: {push_target_pos}")
-        push_object_pos_before = get_primary_object_pos(env.obs)
-        if push_object_pos_before is not None:
-            push_episode_summary["object_pos_before"] = [
-                float(value) for value in np.array(push_object_pos_before, dtype=float).tolist()
-            ]
-        print(
-            "Distance robot1 EEF -> push target: "
-            f"{np.linalg.norm(env.obs['robot1_eef_pos'] - push_target_pos):.4f} m"
-        )
-        print(f"Push direction: {PUSH_DIRECTION}")
-        print(f"Pushing obstacle at {push_target_pos}...")
-        push_success = execute_push(env, push_target_pos, PUSH_DIRECTION, arm_idx=1)
-        print(f"  Push result: {'SUCCESS' if push_success else 'FAILED'}")
-        if not push_success:
-            execution_summary["push_failure_mode"] = "execution_drift"
-            if not fsm.is_terminal():
-                fsm.handle_push_blocked()
-        push_object_pos_after = get_primary_object_pos(env.obs)
-        if push_object_pos_after is not None:
-            push_episode_summary["object_pos_after"] = [
-                float(value) for value in np.array(push_object_pos_after, dtype=float).tolist()
-            ]
-        print(f"Object pos after push: {push_object_pos_after}")
-        print(
-            "Distance robot1 EEF -> push target after attempt: "
-            f"{np.linalg.norm(env.obs['robot1_eef_pos'] - push_target_pos):.4f} m"
-        )
-        if push_object_pos_before is not None and push_object_pos_after is not None:
-            push_displacement_xy = np.linalg.norm(
-                push_object_pos_after[:2] - push_object_pos_before[:2]
+        push_target_pos = get_obstacle_pos_from_detection(refreshed_detection)
+        push_source = "vision obstacle"
+    if push_target_pos is None and perception_loop is not None and not VISION_OFF:
+        try:
+            rgb, depth, _ = env.get_observation()
+            refreshed_detection = perception_loop.publish_from_observation(
+                perception_queue=perception_queue,
+                rgb_image=rgb,
+                depth_image=depth,
             )
-        else:
-            push_displacement_xy = 0.0
-        print(f"Object XY displacement after push: {push_displacement_xy:.4f} m")
-        print(f"After push: robot1_gripper_width = {get_gripper_width(env, 1):.4f}")
-        print("Returning arms home after push task...")
-        home_success = home_arms(env)
-        print(f"  Home result: {'SUCCESS' if home_success else 'FAILED'}")
-        push_episode_summary["success"] = bool(push_success)
-        push_episode_summary["failure_mode"] = execution_summary.get("push_failure_mode")
+            push_target_pos = get_obstacle_pos_from_detection(refreshed_detection)
+        except Exception as exc:
+            print(f"Vision refresh before push unavailable: {exc}")
+    if push_target_pos is None:
+        push_target_pos = get_primary_object_pos(env.obs)
+        push_source = "environment observation"
+    if push_target_pos is None:
+        raise RuntimeError("No object position found in robosuite observations.")
+    execution_summary["push_source"] = push_source
+    push_episode_summary["source"] = push_source
+    push_episode_summary["target_pos"] = [
+        float(value) for value in np.array(push_target_pos, dtype=float).tolist()
+    ]
+    print(f"Push target source: {push_source}")
+    print(f"Object pos before push: {push_target_pos}")
+    push_object_pos_before = get_primary_object_pos(env.obs)
+    if push_object_pos_before is not None:
+        push_episode_summary["object_pos_before"] = [
+            float(value) for value in np.array(push_object_pos_before, dtype=float).tolist()
+        ]
+    print(
+        "Distance robot1 EEF -> push target: "
+        f"{np.linalg.norm(env.obs['robot1_eef_pos'] - push_target_pos):.4f} m"
+    )
+    print(f"Push direction: {PUSH_DIRECTION}")
+    print(f"Pushing obstacle at {push_target_pos}...")
+    push_success = execute_push(env, push_target_pos, PUSH_DIRECTION, arm_idx=1)
+    print(f"  Push result: {'SUCCESS' if push_success else 'FAILED'}")
+    if not push_success:
+        execution_summary["push_failure_mode"] = "execution_drift"
+        if not fsm.is_terminal():
+            fsm.handle_push_blocked()
+    push_object_pos_after = get_primary_object_pos(env.obs)
+    if push_object_pos_after is not None:
+        push_episode_summary["object_pos_after"] = [
+            float(value) for value in np.array(push_object_pos_after, dtype=float).tolist()
+        ]
+    print(f"Object pos after push: {push_object_pos_after}")
+    print(
+        "Distance robot1 EEF -> push target after attempt: "
+        f"{np.linalg.norm(env.obs['robot1_eef_pos'] - push_target_pos):.4f} m"
+    )
+    if push_object_pos_before is not None and push_object_pos_after is not None:
+        push_displacement_xy = np.linalg.norm(
+            push_object_pos_after[:2] - push_object_pos_before[:2]
+        )
+    else:
+        push_displacement_xy = 0.0
+    print(f"Object XY displacement after push: {push_displacement_xy:.4f} m")
+    print(f"After push: robot1_gripper_width = {get_gripper_width(env, 1):.4f}")
+    print("Returning arms home after push task...")
+    home_success = home_arms(env)
+    print(f"  Home result: {'SUCCESS' if home_success else 'FAILED'}")
+    push_episode_summary["success"] = bool(push_success)
+    push_episode_summary["failure_mode"] = execution_summary.get("push_failure_mode")
 
     if push_episode_summary["success"] is None:
         push_episode_summary["success"] = bool(push_success)

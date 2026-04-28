@@ -564,6 +564,8 @@ RL 不是“训出能动就算成功”，而应以对比基线判定：
 - 最新日志表明：pick-place 主链已可跑通，物体能够被双臂带到目标区域并完成释放，当前主失败点已转移为 `post-grasp push test`。
 - 最新日志同时表明：`dual_arm_execution_diagnostics` 仍存在残留诊断问题，例如 attempt 已 `success=true` 但 `failed_stage` 仍保留早期 `approach` 假失败，需要清理诊断写入逻辑。
 - 当前已开始把 grasp 与 push 分成独立 episode 记账，运行日志会分别记录两段的来源、成功/失败和前后物体位置，便于后续单独分析两类回合。
+- 当前 push 阶段已经改成在 grasp 结束后强制开启独立 episode，不再因为 grasp 终止状态而跳过 push 测试。
+- 当前单臂执行也已接入整段轨迹连续化，`execute_grasp` 和 `execute_single_grasp_transfer` 不再只做离散 waypoint 逐点追踪。
 - 下一步需要继续用日志和可视化验证：运动是否更连续、主链成功率是否保持、阶段切换是否减少停顿、push 是否不再推反/顶翻物体。
 
 ### 6. 2026-04-28 最新状态总结

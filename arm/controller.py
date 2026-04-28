@@ -537,6 +537,60 @@ def _step_to_waypoint(env, waypoint, arm_idx, gripper_action, max_steps):
     return np.linalg.norm(target_pos - current) <= WAYPOINT_TOLERANCE
 
 
+def _follow_single_arm_trajectory(
+    env,
+    waypoints,
+    arm_idx,
+    gripper_action,
+    stage_name,
+    max_steps_per_segment=120,
+    success_tolerance=WAYPOINT_TOLERANCE,
+):
+    """Follow one smooth single-arm path instead of stopping at each waypoint."""
+    if getattr(env, "is_episode_terminated", lambda: False)():
+        return False
+
+    path_points = [np.array(point, dtype=float) for point in waypoints]
+    if len(path_points) < 2:
+        raise ValueError("Single-arm trajectory requires at least two waypoints.")
+
+    total_steps = max(1, int(max_steps_per_segment) * (len(path_points) - 1))
+    target_pos = path_points[-1]
+    previous_delta = np.zeros(3, dtype=float)
+
+    for step_idx in range(total_steps):
+        if getattr(env, "is_episode_terminated", lambda: False)():
+            return False
+
+        current_pos = np.array(env.obs[f"robot{arm_idx}_eef_pos"], dtype=float)
+        if np.linalg.norm(target_pos - current_pos) <= success_tolerance:
+            return True
+
+        ratio = _stage_reference_ratio(step_idx, total_steps)
+        segment_progress = ratio * (len(path_points) - 1)
+        segment_index = min(int(segment_progress), len(path_points) - 2)
+        local_ratio = segment_progress - segment_index
+        reference_pos = _interpolate_reference(
+            path_points[segment_index],
+            path_points[segment_index + 1],
+            local_ratio,
+        )
+        delta = _compute_tracking_delta(
+            current_pos=current_pos,
+            reference_pos=reference_pos,
+            previous_delta=previous_delta,
+        )
+        previous_delta = np.array(delta, dtype=float)
+        action = _build_action(env, delta, gripper_action, arm_idx)
+        env.obs, _, done, _ = env.step(action)
+        if done:
+            env.arm_safe_retract()
+            return False
+
+    current_pos = np.array(env.obs[f"robot{arm_idx}_eef_pos"], dtype=float)
+    return np.linalg.norm(target_pos - current_pos) <= success_tolerance
+
+
 def _step_two_arm_waypoints(
     env,
     robot0_waypoint,
@@ -1232,15 +1286,27 @@ def execute_grasp(env, target_pos, arm_idx=0):
     pre_grasp, grasp, lift = compute_grasp_waypoints(target_pos)
     object_pos_before = get_primary_object_pos(env.obs)
 
-    if not _step_to_waypoint(env, pre_grasp, arm_idx, GRIPPER_OPEN, 120):
-        return False
-    if not _step_to_waypoint(env, grasp, arm_idx, GRIPPER_OPEN, 120):
+    if not _follow_single_arm_trajectory(
+        env,
+        [env.obs[f"robot{arm_idx}_eef_pos"], pre_grasp, grasp],
+        arm_idx,
+        GRIPPER_OPEN,
+        stage_name="approach",
+        max_steps_per_segment=120,
+    ):
         return False
 
     if not actuate_gripper(env, arm_idx, GRIPPER_CLOSED):
         return False
 
-    if not _step_to_waypoint(env, lift, arm_idx, GRIPPER_CLOSED, 120):
+    if not _follow_single_arm_trajectory(
+        env,
+        [env.obs[f"robot{arm_idx}_eef_pos"], lift],
+        arm_idx,
+        GRIPPER_CLOSED,
+        stage_name="lift",
+        max_steps_per_segment=120,
+    ):
         return False
 
     return verify_grasp(env, arm_idx, object_pos_before)
@@ -1256,15 +1322,27 @@ def execute_single_grasp_transfer(env, target_pos, place_pos, arm_idx=0):
             return False
 
         pre_grasp, grasp, lift = compute_grasp_waypoints(target_pos)
-        if not _step_to_waypoint(env, pre_grasp, arm_idx, GRIPPER_OPEN, 120):
-            return False
-        if not _step_to_waypoint(env, grasp, arm_idx, GRIPPER_OPEN, 120):
+        if not _follow_single_arm_trajectory(
+            env,
+            [env.obs[f"robot{arm_idx}_eef_pos"], pre_grasp, grasp],
+            arm_idx,
+            GRIPPER_OPEN,
+            stage_name="approach",
+            max_steps_per_segment=120,
+        ):
             return False
 
         if not actuate_gripper(env, arm_idx, GRIPPER_CLOSED):
             return False
 
-        if not _step_to_waypoint(env, lift, arm_idx, GRIPPER_CLOSED, 140):
+        if not _follow_single_arm_trajectory(
+            env,
+            [env.obs[f"robot{arm_idx}_eef_pos"], lift],
+            arm_idx,
+            GRIPPER_CLOSED,
+            stage_name="lift",
+            max_steps_per_segment=140,
+        ):
             return False
 
         object_pos_lifted = get_primary_object_pos(env.obs)
@@ -1286,9 +1364,14 @@ def execute_single_grasp_transfer(env, target_pos, place_pos, arm_idx=0):
         place_high = np.array(env.obs[f"robot{arm_idx}_eef_pos"]) + transfer_delta
         place_low = place_high - np.array([0.0, 0.0, 0.08])
 
-        if not _step_to_waypoint(env, place_high, arm_idx, GRIPPER_CLOSED, 180):
-            return False
-        if not _step_to_waypoint(env, place_low, arm_idx, GRIPPER_CLOSED, 100):
+        if not _follow_single_arm_trajectory(
+            env,
+            [env.obs[f"robot{arm_idx}_eef_pos"], place_high, place_low],
+            arm_idx,
+            GRIPPER_CLOSED,
+            stage_name="transfer",
+            max_steps_per_segment=180,
+        ):
             return False
 
         if not actuate_gripper(env, arm_idx, GRIPPER_OPEN):
