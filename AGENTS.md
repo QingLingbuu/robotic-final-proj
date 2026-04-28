@@ -40,7 +40,7 @@ To prevent multiple agents from stepping on each other, follow strict routing ru
 
 ### 1.3 Pull Requests (PR)
 *   **Atomic Changes:** One PR = One logical change. Never mix a bugfix with a refactoring or a new feature.
-*   **Task Summary Sync (Hard Rule):** If a change affects project status, completed work, next-step priorities, or remaining tasks, the agent **must** update `docs/task.md` in the same branch / PR. Do not let implementation progress and project-task documentation drift apart.
+*   **Task Summary Sync (Hard Rule):** If a change affects project status, completed work, next-step priorities, remaining tasks, group ownership, or run results, the agent **must** update `docs/task.md` in the same branch / PR. Do not let implementation progress and project-task documentation drift apart. See section 1.5 for the required `docs/task.md` maintenance protocol.
 *   **PR Body Template:** Every PR must include Goal and Verification sections:
     ```markdown
     ## Goal
@@ -57,6 +57,26 @@ To prevent multiple agents from stepping on each other, follow strict routing ru
 *   **State Your Reason:** Approve or reject with a brief reason. "LGTM" alone is not enough — explain what you verified.
 *   **Surface Tradeoffs:** If a PR introduces a hardcoded value (e.g., camera intrinsics, magic numbers), comment immediately.
 *   **Run Diff Locally** if the change touches FSM logic, safety code, or IPC interfaces.
+
+### 1.5 `docs/task.md` Progress Board Protocol
+`docs/task.md` is the single source of truth for project progress, next actions, and group-level handoff context. Treat it as the maintained project guide; do not create a parallel `GUIDE.md` unless the team explicitly changes this policy.
+
+*   **Read Before Running:** Before any meaningful run, experiment, implementation phase, or merge cycle, the agent **must** read `docs/task.md` and confirm the current completed work, remaining work, and recommended next step.
+*   **Update After Each Stage:** After completing a stage, experiment, bugfix, or integration step, update `docs/task.md` in the same work cycle. A "stage" can be small if it changes what the next agent should do.
+*   **Group Breakdown Required:** `docs/task.md` must keep separate progress notes for at least these groups:
+    *   `vision/perception`: camera, DINO, coordinate transform, `detected_objects`
+    *   `control/execution`: arm control, OSC, grasp, push, safety retract
+    *   `logic/fsm`: states, retry counters, fallback behavior
+    *   `integration/merge`: main flow, cross-module wiring, conflict resolution
+    *   `eval/logging`: run logs, metrics, report evidence
+    *   `infra/docs`: setup, configs, dependency notes, documentation
+*   **Completed vs Next Task Hygiene:** When a next task is completed, move it into the completed/recent-work summary and merge duplicate wording. Keep the completed entry concise, but preserve the important outcome, files touched, and verification result.
+*   **Detail Placement:** Put the most detail in two places only: the most recent completed stage and the upcoming next tasks. Older completed work should be summarized to avoid burying the current priorities.
+*   **Recommended Next Step:** Every update must leave a clear "recommended next step" with owner group, goal, success criteria, and suggested verification.
+*   **Run Evidence:** If a run was performed, record the command, date, success/failure, relevant log path, and the observed blocker or result. If no run was performed, state why.
+*   **Git-Relevant Content Only:** `docs/task.md` must only describe source/config/documentation changes, project status, task ownership, and next work that should be visible in the git repository. Do **not** record local runtime maintenance such as `.venv` deletion/rebuilds, interpreter installs, package cache downloads, temporary Hugging Face cache state, machine-specific paths, or generated run logs unless the source change itself modifies the logging schema or tracked evaluation artifacts.
+*   **Runtime Notes Stay Out:** If a local setup step matters for the current operator, mention it in the chat or a local untracked note, not in `docs/task.md`. If the step should be reproducible by future agents, add or update a tracked script/config/doc instead, then summarize that tracked change in `docs/task.md`.
+*   **Git Pull/Push Cycle:** Treat each update cycle as `git pull` -> work/run -> update `docs/task.md` -> verify -> commit -> `git push`. Pull before starting so the progress board is current; push after the stage is complete so the next agent sees the updated board. Do not push untested code to `main`.
 
 ---
 

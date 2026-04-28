@@ -29,6 +29,7 @@ class RobosuiteEnvWrapper:
         self.camera_config = camera_config or {}
         self.env = suite.make(**default_config)
         self.obs = self.env.reset()
+        self.done = False
         self.action_dim = self.env.action_dim
         self.home_eef_positions = self._capture_eef_positions()
         self._viewer = None
@@ -60,8 +61,8 @@ class RobosuiteEnvWrapper:
 
     def step(self, action):
         """Execute action and return observation."""
-        if self._episode_terminated:
-            return self.obs, 0.0, True, {}
+        if self.done or self._episode_terminated:
+            return self.obs, 0.0, True, {"terminated": True}
 
         try:
             self.obs, reward, done, info = self.env.step(action)
@@ -69,9 +70,11 @@ class RobosuiteEnvWrapper:
             if "executing action in terminated episode" not in str(exc):
                 raise
             self._episode_terminated = True
-            return self.obs, 0.0, True, {}
+            self.done = True
+            return self.obs, 0.0, True, {"terminated": True}
 
         self._episode_terminated = bool(done)
+        self.done = bool(done)
         return self.obs, reward, done, info
 
     def is_episode_terminated(self):
@@ -159,7 +162,7 @@ class RobosuiteEnvWrapper:
 
     def arm_safe_retract(self):
         """Return both arms to a neutral zero-action pose immediately."""
-        if self._episode_terminated:
+        if self.done or self._episode_terminated:
             return False
 
         action = np.zeros(self.action_dim)
@@ -175,6 +178,7 @@ class RobosuiteEnvWrapper:
     def reset(self):
         """Reset the environment and return the first observation."""
         self.obs = self.env.reset()
+        self.done = False
         self.home_eef_positions = self._capture_eef_positions()
         self._episode_terminated = False
         return self.get_observation()
