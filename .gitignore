@@ -1,6 +1,7 @@
 # Python virtual environments
 .venv/
 venv/
+.python310/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
