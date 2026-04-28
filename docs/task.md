@@ -256,3 +256,44 @@
 - Changed dual-arm release from an in-air open to a surface-aware place sequence: carry high, descend until the object is near the configured place-table height, partially open, retract outward/upward, then fully open.
 - Updated push execution to approach open from above, descend to a contact waypoint, briefly close for a stable pushing surface, then push through the target direction.
 - The current arm motion strategy uses segmented, stepwise waypoint moves for stability during dual-arm carry and release. This can make the arms feel more hesitant or "stuck" than a larger-step controller, so a future follow-up may restore larger move steps once contact stability is confirmed.
+
+## 2026-04-28 Fine-Tuning Guidance
+
+### 当前阶段结论
+
+当前阶段**不建议优先做重的训练微调**。更合适的顺序是先把参数级调优和执行稳定性做扎实，再考虑训练模型。
+
+### 现在优先做的事情
+
+- 调整双臂抓取与接近参数。
+- 优化 waypoint 分段、步长、容差和闭合前对齐误差。
+- 尽快完成 `T_world_cam` 的真实标定，减少对仿真修正的依赖。
+- 保持 `vision/`、`ipc/`、`fsm/`、`logs/` 接口稳定，不要为了微调提前改接口。
+
+### 适合先调的参数
+
+- `dual_grasp_lateral_offset`
+- `dual_grasp_height_offset`
+- `sim_xy_correction_alpha`
+- `MOVE_GAIN`
+- waypoint 步长与容差
+- 相机内参和外参
+
+### 什么时候可以开始训练微调
+
+只有在下面条件基本满足后，再进入训练微调窗口：
+
+- 感知已经稳定输出 `detected_objects`。
+- `perception_queue -> FSM -> arm execution` 的闭环已经连续跑通。
+- 当前主要失败已经从“看不准”转变为“换任务后泛化不足”。
+- 参数调优已经接近瓶颈。
+- 已经积累了足够的成功和失败样本，且失败类型可以区分。
+
+### 判断标准
+
+如果后续出现以下情况，就可以把训练微调提上日程：
+
+- 参数已经多轮调整，但收益明显下降。
+- 失败主要来自新物体、新场景或新任务分布。
+- 控制策略已经稳定，问题更多表现为泛化不足。
+- 任务数据和日志已经足以支持训练与回放分析。
