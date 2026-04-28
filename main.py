@@ -35,7 +35,8 @@ from logs.run_logger import build_run_log, write_run_log
 from vision.perception_loop import VisionPerceptionLoop, VisionPerceptionWorker
 
 KEEP_RENDER_OPEN = False  # Set to True to keep render window open after test
-GRASP_MODE = "single"  # "dual"双臂夹取 or "single"单臂夹取
+GRASP_MODE = "dual"  # "dual"双臂夹取 or "single"单臂夹取
+VISION_OFF = True  # True means grasp and push use robosuite observations only
 ENABLE_PLACE_TEST = True
 REQUIRE_PUSH_TEST_SUCCESS = True
 SINGLE_GRASP_Z_OFFSET = -0.04
@@ -214,6 +215,21 @@ def build_execution_summary():
     }
 
 
+def build_episode_summary(episode_name, episode_index):
+    """Create a compact per-phase episode summary for independent logging."""
+    return {
+        "episode_name": episode_name,
+        "episode_index": int(episode_index),
+        "source": None,
+        "success": None,
+        "failure_mode": None,
+        "target_pos": None,
+        "object_pos_before": None,
+        "object_pos_after": None,
+        "reset_before_episode": False,
+    }
+
+
 def build_failure_counts(fsm, execution_summary):
     """Combine FSM retry counters with post-terminal execution failures."""
     counts = fsm.get_failure_counts()
@@ -240,8 +256,14 @@ def print_detection_summary(prefix, detected_objects):
     print(f"{prefix}: obstacles={len(detected_objects['obstacles'])}")
 
 
-def select_dual_grasp_targets(env, latest_detection, vision_config):
-    """Select dual-arm grasp targets from vision first, then observation handles."""
+def select_dual_grasp_targets(env, latest_detection, vision_config, vision_off=False):
+    """Select dual-arm grasp targets from vision first, unless vision is disabled."""
+    if vision_off:
+        left_target, right_target = get_handle_targets(env.obs)
+        if left_target is not None and right_target is not None:
+            return left_target, right_target, "observation"
+        return None, None, None
+
     corrected_target_pos = get_corrected_vision_target(
         env=env,
         latest_detection=latest_detection,
@@ -417,6 +439,7 @@ def run_grasp_phase(
             env=env,
             latest_detection=latest_detection,
             vision_config=vision_config,
+            vision_off=VISION_OFF,
         )
         if dual_source is None:
             raise RuntimeError("Dual-arm grasp requested but no handle or vision targets are available.")
@@ -478,7 +501,7 @@ def run_grasp_phase(
             )
     else:
         single_source = "observation"
-        if corrected_vision_target_pos is not None:
+        if not VISION_OFF and corrected_vision_target_pos is not None:
             grasp_target_pos = corrected_vision_target_pos
             single_source = "vision"
         execution_summary["grasp_source"] = single_source
@@ -557,6 +580,8 @@ def main():
 
     fsm = TaskStateMachine()
     execution_summary = build_execution_summary()
+    grasp_episode_summary = build_episode_summary("grasp", 1)
+    push_episode_summary = build_episode_summary("push", 2)
     fsm.transition_to(State.PLANNING)
     print(f"\nFSM initialized in state: {fsm.get_current_state().value}")
 
@@ -588,6 +613,17 @@ def main():
         perception_queue=perception_queue,
         execution_summary=execution_summary,
     )
+    grasp_episode_summary["source"] = execution_summary.get("grasp_source")
+    grasp_episode_summary["success"] = bool(grasp_success)
+    grasp_episode_summary["failure_mode"] = execution_summary.get("grasp_failure_mode")
+    grasp_episode_summary["target_pos"] = execution_summary.get("grasp_targets")
+    grasp_episode_summary["object_pos_before"] = execution_summary.get(
+        "object_pos_before_grasp"
+    )
+    grasp_episode_summary["object_pos_after"] = execution_summary.get(
+        "object_pos_after_grasp"
+    )
+    grasp_episode_summary["reset_before_episode"] = False
 
     print(f"  Grasp result: {'SUCCESS' if grasp_success else 'FAILED'}")
     object_pos_after_grasp = get_primary_object_pos(env.obs)
@@ -741,12 +777,20 @@ def main():
         print("  Skipping push test because episode already terminated.")
         push_success = False
         execution_summary["push_failure_mode"] = "execution_drift"
+        push_episode_summary["success"] = False
+        push_episode_summary["failure_mode"] = "execution_drift"
+        push_episode_summary["reset_before_episode"] = True
     else:
         env.reset()
+        push_episode_summary["reset_before_episode"] = True
         refreshed_detection = latest_detection
-        push_target_pos = get_obstacle_pos_from_detection(refreshed_detection)
-        push_source = "vision obstacle"
-        if push_target_pos is None and perception_loop is not None:
+        if VISION_OFF:
+            push_target_pos = get_primary_object_pos(env.obs)
+            push_source = "environment observation"
+        else:
+            push_target_pos = get_obstacle_pos_from_detection(refreshed_detection)
+            push_source = "vision obstacle"
+        if push_target_pos is None and perception_loop is not None and not VISION_OFF:
             try:
                 rgb, depth, _ = env.get_observation()
                 refreshed_detection = perception_loop.publish_from_observation(
@@ -763,9 +807,17 @@ def main():
         if push_target_pos is None:
             raise RuntimeError("No object position found in robosuite observations.")
         execution_summary["push_source"] = push_source
+        push_episode_summary["source"] = push_source
+        push_episode_summary["target_pos"] = [
+            float(value) for value in np.array(push_target_pos, dtype=float).tolist()
+        ]
         print(f"Push target source: {push_source}")
         print(f"Object pos before push: {push_target_pos}")
         push_object_pos_before = get_primary_object_pos(env.obs)
+        if push_object_pos_before is not None:
+            push_episode_summary["object_pos_before"] = [
+                float(value) for value in np.array(push_object_pos_before, dtype=float).tolist()
+            ]
         print(
             "Distance robot1 EEF -> push target: "
             f"{np.linalg.norm(env.obs['robot1_eef_pos'] - push_target_pos):.4f} m"
@@ -779,6 +831,10 @@ def main():
             if not fsm.is_terminal():
                 fsm.handle_push_blocked()
         push_object_pos_after = get_primary_object_pos(env.obs)
+        if push_object_pos_after is not None:
+            push_episode_summary["object_pos_after"] = [
+                float(value) for value in np.array(push_object_pos_after, dtype=float).tolist()
+            ]
         print(f"Object pos after push: {push_object_pos_after}")
         print(
             "Distance robot1 EEF -> push target after attempt: "
@@ -795,6 +851,18 @@ def main():
         print("Returning arms home after push task...")
         home_success = home_arms(env)
         print(f"  Home result: {'SUCCESS' if home_success else 'FAILED'}")
+        push_episode_summary["success"] = bool(push_success)
+        push_episode_summary["failure_mode"] = execution_summary.get("push_failure_mode")
+
+    if push_episode_summary["success"] is None:
+        push_episode_summary["success"] = bool(push_success)
+    if push_episode_summary["failure_mode"] is None:
+        push_episode_summary["failure_mode"] = execution_summary.get("push_failure_mode")
+
+    execution_summary["episode_summaries"] = {
+        "grasp": grasp_episode_summary,
+        "push": push_episode_summary,
+    }
 
     print("\nTesting safe arm retract...")
     if getattr(env, "is_episode_terminated", lambda: False)():
