@@ -67,6 +67,7 @@ PUSH_CONTACT_HEIGHT_OFFSET = -0.035
 PUSH_PRE_HEIGHT_OFFSET = 0.08
 PUSH_SETTLE_STEPS = 12
 VISUAL_DUAL_GRASP_MIN_SPAN = 0.06
+HOME_JOINT_TOLERANCE = 0.05
 
 
 def compute_grasp_waypoints(target_pos):
@@ -535,6 +536,22 @@ def _step_to_waypoint(env, waypoint, arm_idx, gripper_action, max_steps):
 
     current = env.obs[f"robot{arm_idx}_eef_pos"]
     return np.linalg.norm(target_pos - current) <= WAYPOINT_TOLERANCE
+
+
+def _joint_home_reached(env):
+    """Check whether both arms returned close to their initial joint angles."""
+    home_joint_positions = getattr(env, "home_joint_positions", None)
+    if not home_joint_positions:
+        return False
+
+    current_robot0 = np.array(env.obs["robot0_joint_pos"], dtype=float)
+    current_robot1 = np.array(env.obs["robot1_joint_pos"], dtype=float)
+    robot0_home = np.array(home_joint_positions["robot0"], dtype=float)
+    robot1_home = np.array(home_joint_positions["robot1"], dtype=float)
+    return (
+        np.linalg.norm(current_robot0 - robot0_home) <= HOME_JOINT_TOLERANCE
+        and np.linalg.norm(current_robot1 - robot1_home) <= HOME_JOINT_TOLERANCE
+    )
 
 
 def _follow_single_arm_trajectory(
@@ -1268,7 +1285,8 @@ def did_object_move_with_push_success(env, object_pos_before, direction):
 
 def home_arms(env):
     home_positions = getattr(env, "home_eef_positions", None)
-    if not home_positions:
+    home_joint_positions = getattr(env, "home_joint_positions", None)
+    if not home_positions or not home_joint_positions:
         return False
 
     reached_home = _step_two_arm_waypoints(
@@ -1279,7 +1297,16 @@ def home_arms(env):
         GRIPPER_OPEN,
         180,
     )
-    return reached_home and actuate_both_grippers(env, GRIPPER_OPEN, GRIPPER_OPEN)
+    if not reached_home:
+        return False
+
+    if not actuate_both_grippers(env, GRIPPER_OPEN, GRIPPER_OPEN):
+        return False
+
+    if not _wait_with_grippers(env, GRIPPER_OPEN, GRIPPER_OPEN):
+        return False
+
+    return _joint_home_reached(env)
 
 
 def execute_grasp(env, target_pos, arm_idx=0):

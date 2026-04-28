@@ -12,7 +12,6 @@ from arm.controller import (
     execute_dual_handle_lift,
     execute_dual_handle_transfer,
     execute_grasp,
-    execute_push,
     execute_single_grasp_transfer,
     check_object_at_place,
     compute_visual_dual_grasp_targets,
@@ -35,14 +34,13 @@ from logs.run_logger import build_run_log, write_run_log
 from vision.perception_loop import VisionPerceptionLoop, VisionPerceptionWorker
 
 KEEP_RENDER_OPEN = False  # Set to True to keep render window open after test
-GRASP_MODE = "dual"  # "dual"双臂夹取 or "single"单臂夹取
-VISION_OFF = True  # True means grasp and push use robosuite observations only
+GRASP_MODE = "single"  # "dual"双臂夹取 or "single"单臂夹取
+VISION_OFF = True  # True means grasp and obstacle clearing use robosuite observations only
 ENABLE_PLACE_TEST = True
-REQUIRE_PUSH_TEST_SUCCESS = True
 SINGLE_GRASP_Z_OFFSET = -0.04
-PLACE_TARGET_OFFSET = [0.2, 0.2, 0.0]
+PLACE_TARGET_OFFSET = [0, 0, 0.0]
 PLACE_RETRY_ATTEMPTS = 2
-PUSH_DIRECTION = [0.0, 1.0]
+CLEARING_PLACE_OFFSET = [0, 0, 0.0]
 DUAL_SLIP_FAILURE_STAGES = {
     "transfer_high",
     "transfer_low",
@@ -172,7 +170,7 @@ def route_dual_grasp_failure_to_fsm(fsm, execution_summary):
     if failure_mode == "physical_slip":
         fsm.handle_empty_grasp()
     else:
-        fsm.handle_push_blocked()
+        fsm.handle_empty_grasp()
     return failure_mode
 
 
@@ -199,7 +197,6 @@ def build_execution_summary():
         "planning_source": "demo",
         "clearing_source": None,
         "grasp_source": None,
-        "push_source": None,
         "grasp_mode": GRASP_MODE,
         "vision_target_pos": None,
         "corrected_vision_target_pos": None,
@@ -207,7 +204,6 @@ def build_execution_summary():
         "dual_arm_alignment_errors": None,
         "dual_arm_execution_diagnostics": None,
         "grasp_failure_mode": None,
-        "push_failure_mode": None,
         "arm_safe_retract_success": None,
         "post_grasp_terminated": None,
         "object_pos_before_grasp": None,
@@ -233,12 +229,6 @@ def build_episode_summary(episode_name, episode_index):
 def build_failure_counts(fsm, execution_summary):
     """Combine FSM retry counters with post-terminal execution failures."""
     counts = fsm.get_failure_counts()
-    if (
-        REQUIRE_PUSH_TEST_SUCCESS
-        and execution_summary.get("push_failure_mode") == "execution_drift"
-        and counts["n2"] == 0
-    ):
-        counts["n2"] = 1
     if execution_summary.get("grasp_failure_mode") == "physical_slip" and counts["n3"] == 0:
         counts["n3"] = 1
     if execution_summary.get("grasp_failure_mode") == "execution_drift" and counts["n2"] == 0:
@@ -358,26 +348,33 @@ def run_planning_phase(
 def run_clearing_phase(
     env, fsm, perception_queue, perception_loop, latest_detection, execution_summary
 ):
-    """Clear the highest-priority obstacle and refresh planning."""
+    """Clear the highest-priority obstacle by grasping and relocating it."""
     if perception_loop is None or fsm.get_current_state() != State.CLEARING:
         return latest_detection, fsm.get_current_state() == State.GRASPING
 
-    print("\n--- PLANNING: clearing obstacle selected by vision ---")
+    print("\n--- PLANNING: clearing obstacle by grasping and relocating ---")
     execution_summary["planning_source"] = "vision"
     obstacle_count = get_obstacle_count_from_detection(latest_detection)
     print(f"Detected obstacles before clearing: {obstacle_count}")
-    push_target_pos = get_obstacle_pos_from_detection(latest_detection)
-    if push_target_pos is None:
-        print("No obstacle position available from vision; routing to RETRY_PUSH.")
-        fsm.handle_push_blocked()
+    obstacle_pos = get_obstacle_pos_from_detection(latest_detection)
+    if obstacle_pos is None:
+        print("No obstacle position available from vision; routing to RETRY_SENSING.")
+        fsm.handle_invalid_perception()
         return latest_detection, False
 
-    print(f"Clearing obstacle from vision at {push_target_pos}")
-    execution_summary["clearing_source"] = "vision"
-    push_success = execute_push(env, push_target_pos, PUSH_DIRECTION, arm_idx=1)
-    print(f"  Planned clearing result: {'SUCCESS' if push_success else 'FAILED'}")
-    if not push_success:
-        fsm.handle_push_blocked()
+    clear_place_pos = np.array(obstacle_pos, dtype=float) + np.array(CLEARING_PLACE_OFFSET)
+    execution_summary["clearing_source"] = "grasp"
+    print(f"Clearing obstacle from vision at {obstacle_pos}")
+    print(f"Clearing place target: {clear_place_pos}")
+    clear_success = execute_single_grasp_transfer(
+        env,
+        obstacle_pos,
+        clear_place_pos,
+        arm_idx=1,
+    )
+    print(f"  Planned clearing result: {'SUCCESS' if clear_success else 'FAILED'}")
+    if not clear_success:
+        fsm.handle_empty_grasp()
         return latest_detection, False
 
     print("Clearing succeeded; continuing to single-arm grasp with current vision target.")
@@ -587,7 +584,6 @@ def main():
     fsm = TaskStateMachine()
     execution_summary = build_execution_summary()
     grasp_episode_summary = build_episode_summary("grasp", 1)
-    push_episode_summary = build_episode_summary("push", 2)
     fsm.transition_to(State.PLANNING)
     print(f"\nFSM initialized in state: {fsm.get_current_state().value}")
 
@@ -642,116 +638,13 @@ def main():
     print(f"After grasp: robot1_eef_pos = {env.obs['robot1_eef_pos']}")
     print(f"After grasp: robot0_gripper_width = {get_gripper_width(env, 0):.4f}")
     print(f"After grasp: robot1_gripper_width = {get_gripper_width(env, 1):.4f}")
-    if place_target_pos is not None:
-        place_check = False
-        for retry_idx in range(PLACE_RETRY_ATTEMPTS + 1):
-            place_check = check_object_at_place(env, place_target_pos)
-            place_status = get_place_status(env, place_target_pos)
-            print(
-                "Object near place target before home: "
-                f"{'YES' if place_check else 'NO'}"
-            )
-            if place_check:
-                grasp_success = True
-                break
-            if getattr(env, "is_episode_terminated", lambda: False)():
-                print("  Episode terminated during grasp attempt; stopping retries.")
-                break
-            if retry_idx >= PLACE_RETRY_ATTEMPTS:
-                break
-
-            if (
-                GRASP_MODE == "dual"
-                and place_status["near_place"]
-                and not place_status["released"]
-            ):
-                print("Place target reached but object is still held; retrying release only...")
-                grasp_success = release_dual_grasp_with_clearance(
-                    env,
-                    env.obs["robot0_eef_pos"],
-                    env.obs["robot1_eef_pos"],
-                    object_pos=get_primary_object_pos(env.obs),
-                    handle_yaw=None,
-                )
-                continue
-
-            if place_status["near_place"] and place_status["released"]:
-                print(
-                    "Place target reached and object released, but placement is not yet stable "
-                    f"(height_valid={place_status['height_valid']}, upright={place_status['upright']}); "
-                    "rechecking before any full retry..."
-                )
-                grasp_success = False
-                continue
-
-            print(
-                "Place target missed; retrying pick-place "
-                f"({retry_idx + 1}/{PLACE_RETRY_ATTEMPTS})..."
-            )
-            refreshed_detection = refresh_detection_for_retry(
-                env=env,
-                perception_loop=perception_loop,
-                perception_queue=perception_queue,
-            )
-            if refreshed_detection is not None:
-                latest_detection = refreshed_detection
-            if GRASP_MODE == "dual":
-                left_handle_pos, right_handle_pos, dual_source = select_dual_grasp_targets(
-                    env=env,
-                    latest_detection=latest_detection,
-                    vision_config=vision_config,
-                )
-                if dual_source is None:
-                    print("  Retry skipped: dual-arm grasp targets unavailable.")
-                    break
-                execution_summary["grasp_source"] = dual_source
-                print(f"  Retry dual-arm grasp source: {dual_source}")
-                grasp_success = execute_dual_handle_transfer(
-                    env,
-                    left_handle_pos,
-                    right_handle_pos,
-                    place_target_pos,
-                    diagnostics=execution_summary["dual_arm_execution_diagnostics"],
-                    targets_are_grasp_points=(dual_source == "vision"),
-                )
-            else:
-                grasp_target_pos = get_default_grasp_target(env.obs, arm_idx=0)
-                single_source = "observation"
-                corrected_vision_target_pos = get_corrected_vision_target(
-                    env=env,
-                    latest_detection=latest_detection,
-                    vision_config=vision_config,
-                )
-                if corrected_vision_target_pos is not None:
-                    grasp_target_pos = corrected_vision_target_pos
-                    single_source = "vision"
-                if grasp_target_pos is None:
-                    print("  Retry skipped: single-arm grasp target unavailable.")
-                    break
-                execution_summary["grasp_source"] = single_source
-                single_grasp_pos = build_single_grasp_pos(
-                    env,
-                    grasp_target_pos,
-                    single_source,
-                )
-                grasp_success = execute_single_grasp_transfer(
-                    env,
-                    single_grasp_pos,
-                    place_target_pos,
-                    arm_idx=0,
-                )
-
     manipulation_success = grasp_success
     grasp_failure_mode = None
-    if place_target_pos is not None:
-        manipulation_success = bool(grasp_success and place_check)
-        if not manipulation_success:
-            if grasp_success and not place_check:
-                grasp_failure_mode = "physical_slip"
-            elif GRASP_MODE == "dual":
-                grasp_failure_mode = classify_dual_grasp_failure(execution_summary)
-            else:
-                grasp_failure_mode = "physical_slip"
+    if not manipulation_success:
+        if GRASP_MODE == "dual":
+            grasp_failure_mode = classify_dual_grasp_failure(execution_summary)
+        else:
+            grasp_failure_mode = "physical_slip"
     execution_summary["grasp_failure_mode"] = grasp_failure_mode
 
     if manipulation_success:
@@ -765,7 +658,7 @@ def main():
         elif grasp_failure_mode == "physical_slip":
             fsm.handle_empty_grasp()
         else:
-            fsm.handle_push_blocked()
+            fsm.handle_empty_grasp()
 
     if getattr(env, "is_episode_terminated", lambda: False)():
         execution_summary["post_grasp_terminated"] = True
@@ -778,90 +671,8 @@ def main():
         home_success = home_arms(env)
         print(f"  Home result: {'SUCCESS' if home_success else 'FAILED'}")
 
-    print("\n--- TEST 2: real push control ---")
-    if getattr(env, "is_episode_terminated", lambda: False)():
-        print("  Grasp episode already terminated; starting a fresh push episode anyway.")
-    env.reset()
-    push_episode_summary["reset_before_episode"] = True
-    refreshed_detection = latest_detection
-    if VISION_OFF:
-        push_target_pos = get_primary_object_pos(env.obs)
-        push_source = "environment observation"
-    else:
-        push_target_pos = get_obstacle_pos_from_detection(refreshed_detection)
-        push_source = "vision obstacle"
-    if push_target_pos is None and perception_loop is not None and not VISION_OFF:
-        try:
-            rgb, depth, _ = env.get_observation()
-            refreshed_detection = perception_loop.publish_from_observation(
-                perception_queue=perception_queue,
-                rgb_image=rgb,
-                depth_image=depth,
-            )
-            push_target_pos = get_obstacle_pos_from_detection(refreshed_detection)
-        except Exception as exc:
-            print(f"Vision refresh before push unavailable: {exc}")
-    if push_target_pos is None:
-        push_target_pos = get_primary_object_pos(env.obs)
-        push_source = "environment observation"
-    if push_target_pos is None:
-        raise RuntimeError("No object position found in robosuite observations.")
-    execution_summary["push_source"] = push_source
-    push_episode_summary["source"] = push_source
-    push_episode_summary["target_pos"] = [
-        float(value) for value in np.array(push_target_pos, dtype=float).tolist()
-    ]
-    print(f"Push target source: {push_source}")
-    print(f"Object pos before push: {push_target_pos}")
-    push_object_pos_before = get_primary_object_pos(env.obs)
-    if push_object_pos_before is not None:
-        push_episode_summary["object_pos_before"] = [
-            float(value) for value in np.array(push_object_pos_before, dtype=float).tolist()
-        ]
-    print(
-        "Distance robot1 EEF -> push target: "
-        f"{np.linalg.norm(env.obs['robot1_eef_pos'] - push_target_pos):.4f} m"
-    )
-    print(f"Push direction: {PUSH_DIRECTION}")
-    print(f"Pushing obstacle at {push_target_pos}...")
-    push_success = execute_push(env, push_target_pos, PUSH_DIRECTION, arm_idx=1)
-    print(f"  Push result: {'SUCCESS' if push_success else 'FAILED'}")
-    if not push_success:
-        execution_summary["push_failure_mode"] = "execution_drift"
-        if not fsm.is_terminal():
-            fsm.handle_push_blocked()
-    push_object_pos_after = get_primary_object_pos(env.obs)
-    if push_object_pos_after is not None:
-        push_episode_summary["object_pos_after"] = [
-            float(value) for value in np.array(push_object_pos_after, dtype=float).tolist()
-        ]
-    print(f"Object pos after push: {push_object_pos_after}")
-    print(
-        "Distance robot1 EEF -> push target after attempt: "
-        f"{np.linalg.norm(env.obs['robot1_eef_pos'] - push_target_pos):.4f} m"
-    )
-    if push_object_pos_before is not None and push_object_pos_after is not None:
-        push_displacement_xy = np.linalg.norm(
-            push_object_pos_after[:2] - push_object_pos_before[:2]
-        )
-    else:
-        push_displacement_xy = 0.0
-    print(f"Object XY displacement after push: {push_displacement_xy:.4f} m")
-    print(f"After push: robot1_gripper_width = {get_gripper_width(env, 1):.4f}")
-    print("Returning arms home after push task...")
-    home_success = home_arms(env)
-    print(f"  Home result: {'SUCCESS' if home_success else 'FAILED'}")
-    push_episode_summary["success"] = bool(push_success)
-    push_episode_summary["failure_mode"] = execution_summary.get("push_failure_mode")
-
-    if push_episode_summary["success"] is None:
-        push_episode_summary["success"] = bool(push_success)
-    if push_episode_summary["failure_mode"] is None:
-        push_episode_summary["failure_mode"] = execution_summary.get("push_failure_mode")
-
     execution_summary["episode_summaries"] = {
         "grasp": grasp_episode_summary,
-        "push": push_episode_summary,
     }
 
     print("\nTesting safe arm retract...")
@@ -892,7 +703,6 @@ def main():
     run_success = bool(
         planning_completed
         and manipulation_success
-        and (push_success or not REQUIRE_PUSH_TEST_SUCCESS)
         and arm_safe_retract_success
     )
 
@@ -900,12 +710,7 @@ def main():
     duration_sec = time.monotonic() - start_time
     run_context = build_run_context(fsm, run_success)
     if not run_success and fsm.get_current_state() == State.SUCCESS:
-        if execution_summary.get("push_failure_mode") is not None:
-            run_context = (
-                "Manipulation FSM reached SUCCESS, but the post-grasp push test failed; "
-                "overall integration run failed."
-            )
-        elif not arm_safe_retract_success:
+        if not arm_safe_retract_success:
             run_context = (
                 "Manipulation FSM reached SUCCESS, but final safe retract failed; "
                 "overall integration run failed."

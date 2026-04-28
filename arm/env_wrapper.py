@@ -41,6 +41,12 @@ class RobosuiteEnvWrapper:
             "robot1": np.array(self.obs["robot1_eef_pos"], dtype=float).copy(),
         }
 
+    def _capture_joint_positions(self):
+        return {
+            "robot0": np.array(self.obs["robot0_joint_pos"], dtype=float).copy(),
+            "robot1": np.array(self.obs["robot1_joint_pos"], dtype=float).copy(),
+        }
+
     def get_observation(self):
         """Get current observation from environment."""
         rgb = self.obs["frontview_image"]
@@ -180,6 +186,8 @@ class RobosuiteEnvWrapper:
         self.obs = self.env.reset()
         self.done = False
         self.home_eef_positions = self._capture_eef_positions()
+        self.home_joint_positions = self._capture_joint_positions()
+        self.home_joint_positions = self._capture_joint_positions()
         self._episode_terminated = False
         return self.get_observation()
 
