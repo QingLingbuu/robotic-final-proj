@@ -40,14 +40,22 @@ class GroundingDinoDetector:
 
         self._torch = torch
         self._image_cls = Image
-        self._processor = AutoProcessor.from_pretrained(
-            model_id,
-            local_files_only=bool(local_files_only),
-        )
-        self._model = AutoModelForZeroShotObjectDetection.from_pretrained(
-            model_id,
-            local_files_only=bool(local_files_only),
-        )
+        try:
+            self._processor = AutoProcessor.from_pretrained(
+                model_id,
+                local_files_only=bool(local_files_only),
+            )
+            self._model = AutoModelForZeroShotObjectDetection.from_pretrained(
+                model_id,
+                local_files_only=bool(local_files_only),
+            )
+        except Exception as exc:
+            if local_files_only:
+                raise RuntimeError(
+                    "Grounding DINO model cache is missing or incomplete. "
+                    "Run `python scripts/cache_grounding_dino.py` once, then retry."
+                ) from exc
+            raise
         self._device = device
         self._box_threshold = float(box_threshold)
         self._text_threshold = float(text_threshold)
@@ -86,14 +94,14 @@ class GroundingDinoDetector:
             "pip install transformers",
         )
 
-        min_version = (4, 38, 0)
+        min_version = (4, 41, 0)
         parsed_version = cls._parse_version(transformers_version)
         if parsed_version < min_version:
             raise ImportError(
-                "Grounding DINO backend requires `transformers>=4.38.0` for "
+                "Grounding DINO backend requires `transformers>=4.41.0` for "
                 "zero-shot object detection support. "
                 f"Current version: {transformers_version}. "
-                "Upgrade with: pip install -U \"transformers>=4.38.0\""
+                "Upgrade with: pip install -U \"transformers>=4.41.0\""
             )
 
         try:
@@ -103,7 +111,7 @@ class GroundingDinoDetector:
                 "Installed `transformers` does not expose Grounding DINO zero-shot "
                 "object detection APIs. "
                 f"Detected version: {transformers_version}. "
-                "Upgrade with: pip install -U \"transformers>=4.38.0\""
+                "Upgrade with: pip install -U \"transformers>=4.41.0\""
             ) from exc
 
     def detect(self, rgb_image, labels):

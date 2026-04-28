@@ -6,6 +6,15 @@ from vision.detected_objects import validate_detected_objects
 from fsm.state_machine import State
 
 
+def drain_perception_queue(perception_queue):
+    """Remove stale queued payloads before publishing a fresh observation."""
+    while True:
+        try:
+            perception_queue.get_nowait()
+        except Empty:
+            return
+
+
 def choose_next_state_from_detection(detected_objects):
     """Choose the next planning state from a validated perception payload."""
     if detected_objects.get("obstacles"):
@@ -59,6 +68,7 @@ def run_live_perception_cycle(
         fsm.transition_to(State.PLANNING)
 
         if env is not None and perception_loop is not None:
+            drain_perception_queue(perception_queue)
             rgb, depth, _ = env.get_observation()
             latest_detection = perception_loop.publish_from_observation(
                 perception_queue=perception_queue,

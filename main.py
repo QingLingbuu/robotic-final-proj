@@ -27,7 +27,7 @@ from arm.controller import (
     release_dual_grasp_with_clearance,
 )
 from arm.env_wrapper import RobosuiteEnvWrapper
-from fsm.demo_cycles import build_run_context, run_demo_cycles
+from fsm.demo_cycles import build_run_context
 from fsm.perception_cycle import run_live_perception_cycle
 from fsm.state_machine import State, TaskStateMachine
 from ipc.perception_queue import PERCEPTION_QUEUE_NAME, create_perception_queue
@@ -35,7 +35,7 @@ from logs.run_logger import build_run_log, write_run_log
 from vision.perception_loop import VisionPerceptionLoop, VisionPerceptionWorker
 
 KEEP_RENDER_OPEN = False  # Set to True to keep render window open after test
-GRASP_MODE = "dual"  # "dual"双臂夹取 or "single"单臂夹取
+GRASP_MODE = "single"  # "dual"双臂夹取 or "single"单臂夹取
 ENABLE_PLACE_TEST = True
 REQUIRE_PUSH_TEST_SUCCESS = True
 SINGLE_GRASP_Z_OFFSET = -0.04
@@ -78,6 +78,28 @@ def get_target_pos_from_detection(detected_objects):
     if not vision_payload_ready(detected_objects):
         return None
     return np.array(detected_objects["target"]["pos"], dtype=float)
+
+
+def get_corrected_vision_target(env, latest_detection, vision_config):
+    """Return the vision target with temporary robosuite-side correction applied."""
+    vision_target_pos = get_target_pos_from_detection(latest_detection)
+    if vision_target_pos is None:
+        return None
+
+    corrected_target_pos = np.array(vision_target_pos, dtype=float)
+    primary_object_pos = get_primary_object_pos(env.obs)
+    if primary_object_pos is not None:
+        alpha = float(vision_config.get("sim_xy_correction_alpha", 1.0))
+        alpha = min(max(alpha, 0.0), 1.0)
+        corrected_target_pos[:2] = (
+            alpha * corrected_target_pos[:2]
+            + (1.0 - alpha) * np.array(primary_object_pos[:2], dtype=float)
+        )
+    if vision_config.get("use_sim_height_correction", False):
+        if primary_object_pos is not None:
+            corrected_target_pos[2] = float(primary_object_pos[2])
+
+    return corrected_target_pos
 
 
 def get_obstacle_pos_from_detection(detected_objects):
@@ -153,6 +175,23 @@ def route_dual_grasp_failure_to_fsm(fsm, execution_summary):
     return failure_mode
 
 
+def build_single_grasp_pos(env, grasp_target_pos, source, vision_config=None):
+    """Return the final single-arm grasp point for the selected target source."""
+    grasp_target_pos = np.array(grasp_target_pos, dtype=float)
+    vision_config = vision_config or {}
+    if source == "vision":
+        offset = np.array(
+            vision_config.get("single_vision_grasp_offset", [0.09, -0.08, 0.06]),
+            dtype=float,
+        )
+        if offset.shape != (3,):
+            raise ValueError("single_vision_grasp_offset must contain exactly 3 values.")
+        return grasp_target_pos + offset
+
+    z_offset = float(vision_config.get("single_grasp_z_offset", SINGLE_GRASP_Z_OFFSET))
+    return grasp_target_pos + np.array([0.0, 0.0, z_offset])
+
+
 def build_execution_summary():
     """Create a mutable summary for logging which data sources drove actions."""
     return {
@@ -162,6 +201,7 @@ def build_execution_summary():
         "push_source": None,
         "grasp_mode": GRASP_MODE,
         "vision_target_pos": None,
+        "corrected_vision_target_pos": None,
         "grasp_targets": None,
         "dual_arm_alignment_errors": None,
         "dual_arm_execution_diagnostics": None,
@@ -202,20 +242,12 @@ def print_detection_summary(prefix, detected_objects):
 
 def select_dual_grasp_targets(env, latest_detection, vision_config):
     """Select dual-arm grasp targets from vision first, then observation handles."""
-    vision_target_pos = get_target_pos_from_detection(latest_detection)
-    if vision_target_pos is not None:
-        corrected_target_pos = np.array(vision_target_pos, dtype=float)
-        primary_object_pos = get_primary_object_pos(env.obs)
-        if primary_object_pos is not None:
-            alpha = float(vision_config.get("sim_xy_correction_alpha", 1.0))
-            alpha = min(max(alpha, 0.0), 1.0)
-            corrected_target_pos[:2] = (
-                alpha * corrected_target_pos[:2]
-                + (1.0 - alpha) * np.array(primary_object_pos[:2], dtype=float)
-            )
-        if vision_config.get("use_sim_height_correction", False):
-            if primary_object_pos is not None:
-                corrected_target_pos[2] = float(primary_object_pos[2])
+    corrected_target_pos = get_corrected_vision_target(
+        env=env,
+        latest_detection=latest_detection,
+        vision_config=vision_config,
+    )
+    if corrected_target_pos is not None:
         left_target, right_target = compute_visual_dual_grasp_targets(
             target_pos=corrected_target_pos,
             robot0_eef_pos=env.obs["robot0_eef_pos"],
@@ -269,7 +301,7 @@ def initialize_vision_system(env, camera_config, vision_config, conf_thresh, per
         if perception_worker is not None:
             perception_worker.stop()
         print(f"  Vision loop unavailable: {exc}")
-        print("  Continuing with demo FSM cycles only.")
+        print("  Continuing with environment-observation fallback for real control.")
         return None, None, None
 
 
@@ -281,7 +313,7 @@ def run_planning_phase(
     perception_loop,
     perception_worker,
 ):
-    """Drive planning from live perception when available, else run demo cycles."""
+    """Drive planning from live perception when available, else use real-control fallback."""
     latest_detection = None
     if perception_loop is not None:
         if perception_worker is not None:
@@ -295,12 +327,10 @@ def run_planning_phase(
         print_detection_summary("Live perception payload", latest_detection)
         return latest_detection, live_cycle_ok and fsm.get_current_state() == State.GRASPING
 
-    task_completed = run_demo_cycles(
-        fsm=fsm,
-        perception_queue=perception_queue,
-        conf_thresh=conf_thresh,
-    )
-    return latest_detection, task_completed
+    print("Vision unavailable; skipping demo recovery cycles before real grasp.")
+    print("Using robosuite object observations as a fallback target source.")
+    fsm.transition_to(State.GRASPING)
+    return latest_detection, True
 
 
 def run_clearing_phase(
@@ -328,15 +358,9 @@ def run_clearing_phase(
         fsm.handle_push_blocked()
         return latest_detection, False
 
-    fsm.transition_to(State.PLANNING)
-    latest_detection, task_completed = run_live_perception_cycle(
-        fsm=fsm,
-        perception_queue=perception_queue,
-        env=env,
-        perception_loop=perception_loop,
-    )
-    print_detection_summary("Post-clearing vision payload", latest_detection)
-    return latest_detection, task_completed and fsm.get_current_state() == State.GRASPING
+    print("Clearing succeeded; continuing to single-arm grasp with current vision target.")
+    fsm.transition_to(State.GRASPING)
+    return latest_detection, True
 
 
 def run_grasp_phase(
@@ -374,6 +398,17 @@ def run_grasp_phase(
             float(value) for value in np.array(vision_target_pos, dtype=float).tolist()
         ]
         print(f"Vision target world pos: {vision_target_pos}")
+    corrected_vision_target_pos = get_corrected_vision_target(
+        env=env,
+        latest_detection=latest_detection,
+        vision_config=vision_config,
+    )
+    if corrected_vision_target_pos is not None:
+        execution_summary["corrected_vision_target_pos"] = [
+            float(value)
+            for value in np.array(corrected_vision_target_pos, dtype=float).tolist()
+        ]
+        print(f"Corrected vision target pos: {corrected_vision_target_pos}")
     print(f"Primary object pos: {primary_object_pos}")
     print(f"Grasp mode: {GRASP_MODE}")
 
@@ -443,16 +478,21 @@ def run_grasp_phase(
             )
     else:
         single_source = "observation"
-        if vision_target_pos is not None:
-            grasp_target_pos = vision_target_pos
+        if corrected_vision_target_pos is not None:
+            grasp_target_pos = corrected_vision_target_pos
             single_source = "vision"
         execution_summary["grasp_source"] = single_source
-        single_grasp_pos = grasp_target_pos + np.array([0.0, 0.0, SINGLE_GRASP_Z_OFFSET])
+        single_grasp_pos = build_single_grasp_pos(
+            env,
+            grasp_target_pos,
+            single_source,
+            vision_config,
+        )
         execution_summary["grasp_targets"] = {
             "single": [float(value) for value in np.array(single_grasp_pos, dtype=float).tolist()]
         }
-        print(f"Raw single-arm grasp target ({single_source}): {grasp_target_pos}")
-        print(f"Single-arm grasp target z offset: {SINGLE_GRASP_Z_OFFSET} m")
+        print(f"Single-arm grasp target ({single_source}): {grasp_target_pos}")
+        print(f"Single-arm final grasp pos: {single_grasp_pos}")
         print(
             "Distance robot0 EEF -> grasp target: "
             f"{np.linalg.norm(env.obs['robot0_eef_pos'] - single_grasp_pos):.4f} m"
@@ -635,16 +675,22 @@ def main():
             else:
                 grasp_target_pos = get_default_grasp_target(env.obs, arm_idx=0)
                 single_source = "observation"
-                vision_target_pos = get_target_pos_from_detection(latest_detection)
-                if vision_target_pos is not None:
-                    grasp_target_pos = vision_target_pos
+                corrected_vision_target_pos = get_corrected_vision_target(
+                    env=env,
+                    latest_detection=latest_detection,
+                    vision_config=vision_config,
+                )
+                if corrected_vision_target_pos is not None:
+                    grasp_target_pos = corrected_vision_target_pos
                     single_source = "vision"
                 if grasp_target_pos is None:
                     print("  Retry skipped: single-arm grasp target unavailable.")
                     break
                 execution_summary["grasp_source"] = single_source
-                single_grasp_pos = grasp_target_pos + np.array(
-                    [0.0, 0.0, SINGLE_GRASP_Z_OFFSET]
+                single_grasp_pos = build_single_grasp_pos(
+                    env,
+                    grasp_target_pos,
+                    single_source,
                 )
                 grasp_success = execute_single_grasp_transfer(
                     env,
