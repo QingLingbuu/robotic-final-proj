@@ -1,0 +1,68 @@
+task_name: single_arm_robosuite_lift_baseline
+backend: robosuite
+env:
+  env_name: Lift
+  robots:
+    - Panda
+  env_configuration: single-arm-opposed
+  has_renderer: false
+  has_offscreen_renderer: false
+  use_camera_obs: false
+  use_object_obs: true
+  camera_names:
+    - frontview
+  camera_widths:
+    - 640
+  camera_heights:
+    - 480
+  camera_depths: false
+policy:
+  topology: single_arm_ppo_policy
+  shared_policy: false
+observation:
+  source: privileged_state
+  fields:
+    - robot0_eef_pos
+    - robot0_eef_quat
+    - robot0_gripper_qpos
+    - cube_pos
+action:
+  type: single_arm_delta_pose_plus_gripper
+  dimensions: 7
+reward:
+  coefficients:
+    approach_target: 2.0
+    successful_close: 4.0
+    successful_lift: 6.0
+    collision_penalty: -2.0
+    timeout_penalty: -0.05
+termination:
+  max_steps: 150
+  success_conditions:
+    - object_lifted_above_threshold
+  failure_conditions:
+    - timeout
+metrics:
+  primary: success_rate
+  report:
+    - success_rate
+    - episode_return
+    - episode_length
+    - failure_modes_triggered
+train:
+  smoke_steps: 8
+  checkpoint_every: 4
+  total_timesteps: 20000
+  n_steps: 64
+  progress_print_freq: 20
+eval:
+  seed_set:
+    - 7
+  episodes: 3
+artifacts:
+  root_dir: .sisyphus/artifacts/rl
+  checkpoint_dir: checkpoints
+  metrics_dir: metrics
+render:
+  enabled: false
+  mode: human
