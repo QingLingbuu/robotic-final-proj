@@ -16,13 +16,18 @@ MOVE_GAIN = 8.0
 WAYPOINT_TOLERANCE = 0.025
 DUAL_TRANSFER_TOLERANCE = 0.035
 NEAR_WAYPOINT_DISTANCE = 0.06
+ACTION_SMOOTHING_ALPHA = 0.82
+ACTION_DELTA_LIMIT = 0.45
+REFERENCE_SETTLE_STEPS = 10
 DUAL_FINAL_DESCENT_OFFSET = 0.012
 DUAL_FINAL_DESCENT_XY_TOLERANCE = 0.015
 DUAL_FINAL_DESCENT_MAX_Z_ABOVE_TARGET = 0.06
 DUAL_TRANSIT_MAX_STEPS = 240
-DUAL_TRANSFER_SEGMENT_LENGTH = 0.06
-DUAL_TRANSFER_SEGMENT_STEPS = 90
+DUAL_TRANSFER_SEGMENT_LENGTH = 0.1
+DUAL_TRANSFER_SEGMENT_STEPS = 55
 DUAL_TRANSFER_MIN_HEIGHT = 0.65
+DUAL_APPROACH_STEPS_PER_SEGMENT = 36
+DUAL_TRAJECTORY_STEPS_PER_SEGMENT = 40
 DUAL_CARRY_YAW_BIAS = 0.12
 DUAL_UNSNAG_YAW_BIAS = 0.28
 DUAL_UNSNAG_STEPS = 24
@@ -39,6 +44,12 @@ GRASP_WIDTH_THRESHOLD = 0.02
 OBJECT_MOVE_THRESHOLD = 0.02
 OBJECT_LIFT_THRESHOLD = 0.02
 OBJECT_PLACE_TOLERANCE = 0.08
+OBJECT_PLACE_HEIGHT_TOLERANCE = 0.05
+OBJECT_UPRIGHT_Z_THRESHOLD = 0.8
+GRIPPER_RELEASED_WIDTH_THRESHOLD = 0.06
+PUSH_DIRECTION_PROGRESS_THRESHOLD = 0.03
+PUSH_LATERAL_DRIFT_TOLERANCE = 0.04
+PUSH_HEIGHT_CHANGE_TOLERANCE = 0.05
 SINGLE_LIFT_HEIGHT = 0.20
 DUAL_LIFT_HEIGHT = 0.16
 DUAL_RELEASE_RETRACT_DISTANCE = 0.055
@@ -175,6 +186,61 @@ def move_to_waypoint_limited(env, target_eef_pos, arm_idx=0, step_limit=None):
     return np.clip(error * MOVE_GAIN, -applied_step_limit, applied_step_limit)
 
 
+def _smoothstep(ratio):
+    """Ease stage progress so references accelerate and decelerate smoothly."""
+    ratio = float(np.clip(ratio, 0.0, 1.0))
+    return ratio * ratio * (3.0 - 2.0 * ratio)
+
+
+def _interpolate_reference(start_pos, target_pos, ratio):
+    start_pos = np.array(start_pos, dtype=float)
+    target_pos = np.array(target_pos, dtype=float)
+    eased_ratio = _smoothstep(ratio)
+    return start_pos + (target_pos - start_pos) * eased_ratio
+
+
+def _smooth_action_delta(raw_delta, previous_delta, alpha=ACTION_SMOOTHING_ALPHA):
+    """Limit per-step action jumps so stage transitions do not look stop-and-go."""
+    raw_delta = np.array(raw_delta, dtype=float)
+    if previous_delta is None:
+        return raw_delta
+
+    previous_delta = np.array(previous_delta, dtype=float)
+    blended = previous_delta + alpha * (raw_delta - previous_delta)
+    return previous_delta + np.clip(
+        blended - previous_delta,
+        -ACTION_DELTA_LIMIT,
+        ACTION_DELTA_LIMIT,
+    )
+
+
+def _compute_tracking_delta(
+    current_pos,
+    reference_pos,
+    previous_delta=None,
+    step_limit=None,
+):
+    """Track a smooth Cartesian reference instead of repeatedly jumping at the final waypoint."""
+    current_pos = np.array(current_pos, dtype=float)
+    reference_pos = np.array(reference_pos, dtype=float)
+    error = reference_pos - current_pos
+    applied_step_limit = MOVE_STEP if step_limit is None else float(step_limit)
+    if np.linalg.norm(error) <= NEAR_WAYPOINT_DISTANCE:
+        applied_step_limit = min(applied_step_limit, NEAR_MOVE_STEP)
+    raw_delta = np.clip(error * MOVE_GAIN, -applied_step_limit, applied_step_limit)
+    return _smooth_action_delta(raw_delta, previous_delta)
+
+
+def _stage_reference_ratio(step_idx, max_steps):
+    """Spend the last part of a stage tracking the final target directly."""
+    max_steps = max(int(max_steps), 1)
+    settle_steps = min(REFERENCE_SETTLE_STEPS, max_steps // 2)
+    trajectory_steps = max(1, max_steps - settle_steps)
+    if step_idx + 1 >= trajectory_steps:
+        return 1.0
+    return (step_idx + 1) / trajectory_steps
+
+
 def _build_action(env, arm_delta, gripper_action, arm_idx):
     action = np.zeros(env.action_dim)
     if arm_idx == 0:
@@ -248,6 +314,14 @@ def get_primary_object_pos(obs):
     return None
 
 
+def get_primary_object_quat(obs):
+    """Return the primary object orientation quaternion when available."""
+    for key in ("pot_quat", "cube_quat", "object_quat"):
+        if key in obs:
+            return np.array(obs[key][:4], dtype=float)
+    return None
+
+
 def get_default_grasp_target(obs, arm_idx=0):
     """Prefer a visible pot handle for grasp tests, then fall back to object center."""
     handle_keys = (
@@ -288,6 +362,22 @@ def _quat_xyzw_to_yaw(quat):
     siny_cosp = 2.0 * (w * z + x * y)
     cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
     return np.arctan2(siny_cosp, cosy_cosp)
+
+
+def _quat_xyzw_to_matrix(quat):
+    """Convert robosuite xyzw quaternion to a 3x3 rotation matrix."""
+    x, y, z, w = np.array(quat, dtype=float)
+    xx, yy, zz = x * x, y * y, z * z
+    xy, xz, yz = x * y, x * z, y * z
+    wx, wy, wz = w * x, w * y, w * z
+    return np.array(
+        [
+            [1.0 - 2.0 * (yy + zz), 2.0 * (xy - wz), 2.0 * (xz + wy)],
+            [2.0 * (xy + wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz - wx)],
+            [2.0 * (xz - wy), 2.0 * (yz + wx), 1.0 - 2.0 * (xx + yy)],
+        ],
+        dtype=float,
+    )
 
 
 def _get_eef_yaw(env, arm_idx):
@@ -414,14 +504,29 @@ def _step_to_waypoint(env, waypoint, arm_idx, gripper_action, max_steps):
     if getattr(env, "is_episode_terminated", lambda: False)():
         return False
 
-    for _ in range(max_steps):
+    start_pos = np.array(env.obs[f"robot{arm_idx}_eef_pos"], dtype=float)
+    target_pos = np.array(waypoint, dtype=float)
+    previous_delta = np.zeros(3, dtype=float)
+
+    for step_idx in range(max_steps):
         if getattr(env, "is_episode_terminated", lambda: False)():
             return False
         current = env.obs[f"robot{arm_idx}_eef_pos"]
-        if np.linalg.norm(np.array(waypoint) - current) <= WAYPOINT_TOLERANCE:
+        if np.linalg.norm(target_pos - current) <= WAYPOINT_TOLERANCE:
             return True
 
-        delta = move_to_waypoint(env, waypoint, arm_idx)
+        ratio = _stage_reference_ratio(step_idx, max_steps)
+        reference_pos = _interpolate_reference(
+            start_pos,
+            target_pos,
+            ratio,
+        )
+        delta = _compute_tracking_delta(
+            current_pos=current,
+            reference_pos=reference_pos,
+            previous_delta=previous_delta,
+        )
+        previous_delta = np.array(delta, dtype=float)
         action = _build_action(env, delta, gripper_action, arm_idx)
         env.obs, _, done, _ = env.step(action)
         if done:
@@ -429,7 +534,7 @@ def _step_to_waypoint(env, waypoint, arm_idx, gripper_action, max_steps):
             return False
 
     current = env.obs[f"robot{arm_idx}_eef_pos"]
-    return np.linalg.norm(np.array(waypoint) - current) <= WAYPOINT_TOLERANCE
+    return np.linalg.norm(target_pos - current) <= WAYPOINT_TOLERANCE
 
 
 def _step_two_arm_waypoints(
@@ -447,20 +552,34 @@ def _step_two_arm_waypoints(
     if getattr(env, "is_episode_terminated", lambda: False)():
         return False
 
-    for _ in range(max_steps):
+    robot0_start = np.array(env.obs["robot0_eef_pos"], dtype=float)
+    robot1_start = np.array(env.obs["robot1_eef_pos"], dtype=float)
+    robot0_target = np.array(robot0_waypoint, dtype=float)
+    robot1_target = np.array(robot1_waypoint, dtype=float)
+    robot0_previous_delta = np.zeros(3, dtype=float)
+    robot1_previous_delta = np.zeros(3, dtype=float)
+
+    for step_idx in range(max_steps):
         if getattr(env, "is_episode_terminated", lambda: False)():
             return False
         robot0_current = env.obs["robot0_eef_pos"]
         robot1_current = env.obs["robot1_eef_pos"]
-        robot0_error = np.linalg.norm(np.array(robot0_waypoint) - robot0_current)
-        robot1_error = np.linalg.norm(np.array(robot1_waypoint) - robot1_current)
+        robot0_error = np.linalg.norm(robot0_target - robot0_current)
+        robot1_error = np.linalg.norm(robot1_target - robot1_current)
         if robot0_error <= WAYPOINT_TOLERANCE and robot1_error <= WAYPOINT_TOLERANCE:
             if handle_yaw is not None:
                 return _hold_dual_wrist_yaw(env, handle_yaw, robot0_gripper, robot1_gripper)
             return True
 
+        ratio = _stage_reference_ratio(step_idx, max_steps)
+        robot0_reference = _interpolate_reference(robot0_start, robot0_target, ratio)
+        robot1_reference = _interpolate_reference(robot1_start, robot1_target, ratio)
         action = np.zeros(env.action_dim)
-        action[0:3] = move_to_waypoint(env, robot0_waypoint, arm_idx=0)
+        action[0:3] = _compute_tracking_delta(
+            current_pos=robot0_current,
+            reference_pos=robot0_reference,
+            previous_delta=robot0_previous_delta,
+        )
         if follow_handle_yaw:
             live_handle_yaw = get_handle_axis_yaw(env.obs)
             if live_handle_yaw is not None:
@@ -470,17 +589,23 @@ def _step_two_arm_waypoints(
         if robot0_rot_delta is not None:
             action[3:6] = np.array(robot0_rot_delta, dtype=float)
         action[6] = robot0_gripper
-        action[7:10] = move_to_waypoint(env, robot1_waypoint, arm_idx=1)
+        action[7:10] = _compute_tracking_delta(
+            current_pos=robot1_current,
+            reference_pos=robot1_reference,
+            previous_delta=robot1_previous_delta,
+        )
         if robot1_rot_delta is not None:
             action[10:13] = np.array(robot1_rot_delta, dtype=float)
         action[13] = robot1_gripper
+        robot0_previous_delta = np.array(action[0:3], dtype=float)
+        robot1_previous_delta = np.array(action[7:10], dtype=float)
         env.obs, _, done, _ = env.step(action)
         if done:
             env.arm_safe_retract()
             return False
 
-    robot0_error = np.linalg.norm(np.array(robot0_waypoint) - env.obs["robot0_eef_pos"])
-    robot1_error = np.linalg.norm(np.array(robot1_waypoint) - env.obs["robot1_eef_pos"])
+    robot0_error = np.linalg.norm(robot0_target - env.obs["robot0_eef_pos"])
+    robot1_error = np.linalg.norm(robot1_target - env.obs["robot1_eef_pos"])
     return robot0_error <= WAYPOINT_TOLERANCE and robot1_error <= WAYPOINT_TOLERANCE
 
 
@@ -501,13 +626,20 @@ def _step_dual_arm_waypoint_with_compensation(
     if getattr(env, "is_episode_terminated", lambda: False)():
         return False
 
-    for _ in range(max_steps):
+    robot0_start = np.array(env.obs["robot0_eef_pos"], dtype=float)
+    robot1_start = np.array(env.obs["robot1_eef_pos"], dtype=float)
+    robot0_target = np.array(robot0_waypoint, dtype=float)
+    robot1_target = np.array(robot1_waypoint, dtype=float)
+    robot0_previous_delta = np.zeros(3, dtype=float)
+    robot1_previous_delta = np.zeros(3, dtype=float)
+
+    for step_idx in range(max_steps):
         if getattr(env, "is_episode_terminated", lambda: False)():
             return False
         robot0_current = env.obs["robot0_eef_pos"]
         robot1_current = env.obs["robot1_eef_pos"]
-        robot0_error_vec = np.array(robot0_waypoint) - robot0_current
-        robot1_error_vec = np.array(robot1_waypoint) - robot1_current
+        robot0_error_vec = robot0_target - robot0_current
+        robot1_error_vec = robot1_target - robot1_current
         robot0_error = np.linalg.norm(robot0_error_vec)
         robot1_error = np.linalg.norm(robot1_error_vec)
         if robot0_error <= WAYPOINT_TOLERANCE and robot1_error <= WAYPOINT_TOLERANCE:
@@ -515,8 +647,15 @@ def _step_dual_arm_waypoint_with_compensation(
                 return _hold_dual_wrist_yaw(env, handle_yaw, robot0_gripper, robot1_gripper)
             return True
 
+        ratio = _stage_reference_ratio(step_idx, max_steps)
+        robot0_reference = _interpolate_reference(robot0_start, robot0_target, ratio)
+        robot1_reference = _interpolate_reference(robot1_start, robot1_target, ratio)
         action = np.zeros(env.action_dim)
-        action[0:3] = move_to_waypoint_limited(env, robot0_waypoint, arm_idx=0)
+        action[0:3] = _compute_tracking_delta(
+            current_pos=robot0_current,
+            reference_pos=robot0_reference,
+            previous_delta=robot0_previous_delta,
+        )
         if follow_handle_yaw:
             live_handle_yaw = get_handle_axis_yaw(env.obs)
             if live_handle_yaw is not None:
@@ -526,7 +665,11 @@ def _step_dual_arm_waypoint_with_compensation(
         if robot0_rot_delta is not None:
             action[3:6] = np.array(robot0_rot_delta, dtype=float)
         action[6] = robot0_gripper
-        action[7:10] = move_to_waypoint_limited(env, robot1_waypoint, arm_idx=1)
+        action[7:10] = _compute_tracking_delta(
+            current_pos=robot1_current,
+            reference_pos=robot1_reference,
+            previous_delta=robot1_previous_delta,
+        )
         if robot1_rot_delta is not None:
             action[10:13] = np.array(robot1_rot_delta, dtype=float)
         action[13] = robot1_gripper
@@ -540,14 +683,16 @@ def _step_dual_arm_waypoint_with_compensation(
             action[0:3] = np.clip(action[0:3], -compensation_step, compensation_step)
         if robot1_error > NEAR_WAYPOINT_DISTANCE:
             action[7:10] = np.clip(action[7:10], -compensation_step, compensation_step)
+        robot0_previous_delta = np.array(action[0:3], dtype=float)
+        robot1_previous_delta = np.array(action[7:10], dtype=float)
 
         env.obs, _, done, _ = env.step(action)
         if done:
             env.arm_safe_retract()
             return False
 
-    robot0_error = np.linalg.norm(np.array(robot0_waypoint) - env.obs["robot0_eef_pos"])
-    robot1_error = np.linalg.norm(np.array(robot1_waypoint) - env.obs["robot1_eef_pos"])
+    robot0_error = np.linalg.norm(robot0_target - env.obs["robot0_eef_pos"])
+    robot1_error = np.linalg.norm(robot1_target - env.obs["robot1_eef_pos"])
     return robot0_error <= WAYPOINT_TOLERANCE and robot1_error <= WAYPOINT_TOLERANCE
 
 
@@ -631,6 +776,185 @@ def _dual_final_descent_close_enough(env, left_grasp, right_grasp):
         and 0.0 <= robot0_z_above <= DUAL_FINAL_DESCENT_MAX_Z_ABOVE_TARGET
         and 0.0 <= robot1_z_above <= DUAL_FINAL_DESCENT_MAX_Z_ABOVE_TARGET
     )
+
+
+def _prepare_dual_arm_path(robot0_waypoints, robot1_waypoints):
+    """Normalize a two-arm waypoint path and compute segment weights for one smooth traversal."""
+    robot0_points = [np.array(point, dtype=float) for point in robot0_waypoints]
+    robot1_points = [np.array(point, dtype=float) for point in robot1_waypoints]
+    if len(robot0_points) != len(robot1_points):
+        raise ValueError("Dual-arm path requires the same number of waypoints for both arms.")
+    if len(robot0_points) < 2:
+        raise ValueError("Dual-arm path requires at least two waypoints.")
+
+    segment_lengths = []
+    cumulative_lengths = [0.0]
+    for idx in range(len(robot0_points) - 1):
+        robot0_length = np.linalg.norm(robot0_points[idx + 1] - robot0_points[idx])
+        robot1_length = np.linalg.norm(robot1_points[idx + 1] - robot1_points[idx])
+        segment_length = max(robot0_length, robot1_length, 1e-6)
+        segment_lengths.append(segment_length)
+        cumulative_lengths.append(cumulative_lengths[-1] + segment_length)
+
+    return robot0_points, robot1_points, segment_lengths, cumulative_lengths
+
+
+def _dual_arm_path_reference(robot0_points, robot1_points, cumulative_lengths, ratio):
+    """Return synchronized references along a shared dual-arm path progress variable."""
+    ratio = float(np.clip(ratio, 0.0, 1.0))
+    total_length = cumulative_lengths[-1]
+    if total_length <= 1e-6:
+        return robot0_points[-1], robot1_points[-1]
+
+    target_length = ratio * total_length
+    for segment_index in range(len(cumulative_lengths) - 1):
+        segment_start = cumulative_lengths[segment_index]
+        segment_end = cumulative_lengths[segment_index + 1]
+        if target_length <= segment_end or segment_index == len(cumulative_lengths) - 2:
+            local_ratio = (target_length - segment_start) / max(segment_end - segment_start, 1e-6)
+            robot0_reference = _interpolate_reference(
+                robot0_points[segment_index],
+                robot0_points[segment_index + 1],
+                local_ratio,
+            )
+            robot1_reference = _interpolate_reference(
+                robot1_points[segment_index],
+                robot1_points[segment_index + 1],
+                local_ratio,
+            )
+            return robot0_reference, robot1_reference
+
+    return robot0_points[-1], robot1_points[-1]
+
+
+def _follow_dual_arm_trajectory(
+    env,
+    robot0_waypoints,
+    robot1_waypoints,
+    robot0_gripper,
+    robot1_gripper,
+    stage_name,
+    attempt=None,
+    handle_yaw=None,
+    follow_handle_yaw=False,
+    steps_per_segment=DUAL_TRAJECTORY_STEPS_PER_SEGMENT,
+    success_tolerance=WAYPOINT_TOLERANCE,
+    object_height_guard=None,
+    slip_stage_name="transfer_slip",
+):
+    """Follow a single smooth dual-arm path instead of stopping at each intermediate waypoint."""
+    if getattr(env, "is_episode_terminated", lambda: False)():
+        return False
+
+    robot0_points, robot1_points, _, cumulative_lengths = _prepare_dual_arm_path(
+        robot0_waypoints,
+        robot1_waypoints,
+    )
+    robot0_target = robot0_points[-1]
+    robot1_target = robot1_points[-1]
+    total_steps = max(1, int(steps_per_segment) * (len(robot0_points) - 1))
+    robot0_previous_delta = np.zeros(3, dtype=float)
+    robot1_previous_delta = np.zeros(3, dtype=float)
+
+    for step_idx in range(total_steps):
+        if getattr(env, "is_episode_terminated", lambda: False)():
+            return False
+        robot0_current = np.array(env.obs["robot0_eef_pos"], dtype=float)
+        robot1_current = np.array(env.obs["robot1_eef_pos"], dtype=float)
+        robot0_error = np.linalg.norm(robot0_target - robot0_current)
+        robot1_error = np.linalg.norm(robot1_target - robot1_current)
+        if robot0_error <= success_tolerance and robot1_error <= success_tolerance:
+            stage_ok = True
+            _record_dual_arm_stage(attempt, stage_name, env, robot0_target, robot1_target, stage_ok)
+            if handle_yaw is not None:
+                return _hold_dual_wrist_yaw(env, handle_yaw, robot0_gripper, robot1_gripper)
+            return True
+
+        ratio = _stage_reference_ratio(step_idx, total_steps)
+        robot0_reference, robot1_reference = _dual_arm_path_reference(
+            robot0_points,
+            robot1_points,
+            cumulative_lengths,
+            ratio,
+        )
+        action = np.zeros(env.action_dim)
+        action[0:3] = _compute_tracking_delta(
+            current_pos=robot0_current,
+            reference_pos=robot0_reference,
+            previous_delta=robot0_previous_delta,
+        )
+        if follow_handle_yaw:
+            live_handle_yaw = get_handle_axis_yaw(env.obs)
+            if live_handle_yaw is not None:
+                handle_yaw = live_handle_yaw
+        if handle_yaw is not None:
+            robot0_rot_delta, robot1_rot_delta = _build_dual_wrist_yaw_deltas(env, handle_yaw)
+            if robot0_rot_delta is not None:
+                action[3:6] = np.array(robot0_rot_delta, dtype=float)
+            if robot1_rot_delta is not None:
+                action[10:13] = np.array(robot1_rot_delta, dtype=float)
+        action[6] = robot0_gripper
+        action[7:10] = _compute_tracking_delta(
+            current_pos=robot1_current,
+            reference_pos=robot1_reference,
+            previous_delta=robot1_previous_delta,
+        )
+        action[13] = robot1_gripper
+        robot0_previous_delta = np.array(action[0:3], dtype=float)
+        robot1_previous_delta = np.array(action[7:10], dtype=float)
+        env.obs, _, done, _ = env.step(action)
+        if done:
+            env.arm_safe_retract()
+            return False
+        if object_height_guard is not None:
+            object_pos = get_primary_object_pos(env.obs)
+            if object_pos is None or object_pos[2] < object_height_guard:
+                if attempt is not None and attempt["failed_stage"] is None:
+                    attempt["failed_stage"] = slip_stage_name
+                _record_dual_arm_stage(
+                    attempt,
+                    stage_name,
+                    env,
+                    robot0_target,
+                    robot1_target,
+                    False,
+                )
+                return False
+
+    robot0_error = np.linalg.norm(robot0_target - np.array(env.obs["robot0_eef_pos"], dtype=float))
+    robot1_error = np.linalg.norm(robot1_target - np.array(env.obs["robot1_eef_pos"], dtype=float))
+    stage_ok = robot0_error <= success_tolerance and robot1_error <= success_tolerance
+    _record_dual_arm_stage(attempt, stage_name, env, robot0_target, robot1_target, stage_ok)
+    return stage_ok
+
+
+def _execute_dual_arm_approach_trajectory(
+    env,
+    left_waypoints,
+    right_waypoints,
+    attempt=None,
+    handle_yaw=None,
+    stage_name="approach",
+):
+    """Traverse the full pre-grasp approach as one continuous trajectory."""
+    stage_ok = _follow_dual_arm_trajectory(
+        env,
+        [env.obs["robot0_eef_pos"], *left_waypoints],
+        [env.obs["robot1_eef_pos"], *right_waypoints],
+        GRIPPER_OPEN,
+        GRIPPER_OPEN,
+        stage_name=stage_name,
+        attempt=attempt,
+        handle_yaw=handle_yaw,
+        follow_handle_yaw=True,
+        steps_per_segment=DUAL_APPROACH_STEPS_PER_SEGMENT,
+    )
+    if stage_ok:
+        return True
+
+    left_grasp = np.array(left_waypoints[-1], dtype=float)
+    right_grasp = np.array(right_waypoints[-1], dtype=float)
+    return _dual_final_descent_close_enough(env, left_grasp, right_grasp)
 
 
 def _step_dual_arm_transfer_segments(
@@ -725,13 +1049,13 @@ def release_dual_grasp_with_clearance(
     handle_yaw=None,
 ):
     """Set the object near the table, then open and retract to avoid handle snagging."""
-    if not _step_two_arm_waypoints(
+    if not _follow_dual_arm_trajectory(
         env,
-        left_place_pos,
-        right_place_pos,
+        [env.obs["robot0_eef_pos"], left_place_pos],
+        [env.obs["robot1_eef_pos"], right_place_pos],
         GRIPPER_CLOSED,
         GRIPPER_CLOSED,
-        DUAL_RELEASE_RETRACT_STEPS,
+        stage_name="release_place",
         handle_yaw=handle_yaw,
         follow_handle_yaw=True,
     ):
@@ -768,27 +1092,29 @@ def release_dual_grasp_with_clearance(
 
     left_clear = retract_waypoint(left_place_pos)
     right_clear = retract_waypoint(right_place_pos)
-    if not _step_two_arm_waypoints(
+    if not _follow_dual_arm_trajectory(
         env,
-        left_clear,
-        right_clear,
+        [env.obs["robot0_eef_pos"], left_clear],
+        [env.obs["robot1_eef_pos"], right_clear],
         GRIPPER_OPEN,
         GRIPPER_OPEN,
-        DUAL_RELEASE_RETRACT_STEPS,
+        stage_name="release_clearance_path",
         handle_yaw=handle_yaw,
         follow_handle_yaw=True,
+        success_tolerance=DUAL_TRANSFER_TOLERANCE,
     ):
         if not _dual_arm_unsnag_wiggle(env, GRIPPER_OPEN, GRIPPER_OPEN):
             return False
-        if not _step_dual_arm_waypoint_with_compensation(
+        if not _follow_dual_arm_trajectory(
             env,
-            left_clear,
-            right_clear,
+            [env.obs["robot0_eef_pos"], left_clear],
+            [env.obs["robot1_eef_pos"], right_clear],
             GRIPPER_OPEN,
             GRIPPER_OPEN,
-            DUAL_RELEASE_RETRACT_STEPS,
+            stage_name="release_clearance_retry",
             handle_yaw=handle_yaw,
             follow_handle_yaw=True,
+            success_tolerance=DUAL_TRANSFER_TOLERANCE,
         ):
             return False
 
@@ -802,6 +1128,35 @@ def is_object_near_place(env, place_pos):
 
     place_pos = np.array(place_pos, dtype=float)
     return np.linalg.norm(object_pos[:2] - place_pos[:2]) <= OBJECT_PLACE_TOLERANCE
+
+
+def is_object_place_height_valid(env, place_pos):
+    """Require the object to be near the table height, not still suspended after a collision."""
+    object_pos = get_primary_object_pos(env.obs)
+    if object_pos is None:
+        return False
+
+    place_pos = np.array(place_pos, dtype=float)
+    return abs(float(object_pos[2]) - float(place_pos[2])) <= OBJECT_PLACE_HEIGHT_TOLERANCE
+
+
+def is_object_upright(env):
+    """Reject placements where the object has toppled over after being displaced."""
+    object_quat = get_primary_object_quat(env.obs)
+    if object_quat is None:
+        return True
+
+    rotation = _quat_xyzw_to_matrix(object_quat)
+    object_up = rotation[:, 2]
+    return float(object_up[2]) >= OBJECT_UPRIGHT_Z_THRESHOLD
+
+
+def are_grippers_released(env):
+    """Require both grippers to be open enough that the object is no longer being held."""
+    return (
+        get_gripper_width(env, 0) >= GRIPPER_RELEASED_WIDTH_THRESHOLD
+        and get_gripper_width(env, 1) >= GRIPPER_RELEASED_WIDTH_THRESHOLD
+    )
 
 
 def wait_for_object_settle(env, steps=PLACE_SETTLE_STEPS):
@@ -822,7 +1177,39 @@ def wait_for_object_settle(env, steps=PLACE_SETTLE_STEPS):
 def check_object_at_place(env, place_pos):
     if not wait_for_object_settle(env):
         return False
-    return is_object_near_place(env, place_pos)
+    return (
+        is_object_near_place(env, place_pos)
+        and is_object_place_height_valid(env, place_pos)
+        and is_object_upright(env)
+        and are_grippers_released(env)
+    )
+
+
+def did_object_move_with_push_success(env, object_pos_before, direction):
+    """Require meaningful progress along the intended push direction, not just any displacement."""
+    object_pos_after = get_primary_object_pos(env.obs)
+    if object_pos_before is None or object_pos_after is None:
+        return False
+
+    direction = np.array(direction, dtype=float)
+    direction_norm = np.linalg.norm(direction)
+    if direction_norm <= 1e-6:
+        return False
+    direction = direction / direction_norm
+
+    delta_xy = np.array(object_pos_after[:2], dtype=float) - np.array(object_pos_before[:2], dtype=float)
+    progress_along_push = float(np.dot(delta_xy, direction))
+    lateral_drift = float(
+        np.linalg.norm(delta_xy - progress_along_push * direction)
+    )
+    height_change = abs(float(object_pos_after[2]) - float(object_pos_before[2]))
+
+    return (
+        progress_along_push >= PUSH_DIRECTION_PROGRESS_THRESHOLD
+        and lateral_drift <= PUSH_LATERAL_DRIFT_TOLERANCE
+        and height_change <= PUSH_HEIGHT_CHANGE_TOLERANCE
+        and is_object_upright(env)
+    )
 
 
 def home_arms(env):
@@ -936,83 +1323,25 @@ def execute_dual_handle_lift(
     handle_yaw = get_handle_axis_yaw(env.obs, left_handle_pos, right_handle_pos)
     if attempt is not None and handle_yaw is not None:
         attempt["handle_yaw_target_rad"] = float(handle_yaw)
-    stage_ok = _step_dual_arm_waypoint_with_compensation(
+    stage_ok = _execute_dual_arm_approach_trajectory(
         env,
-        stages["left_transit"],
-        stages["right_transit"],
-        GRIPPER_OPEN,
-        GRIPPER_OPEN,
-        DUAL_TRANSIT_MAX_STEPS,
+        [
+            stages["left_transit"],
+            stages["left_pre"],
+            stages["left_align"],
+            stages["left_final"],
+            stages["left_grasp"],
+        ],
+        [
+            stages["right_transit"],
+            stages["right_pre"],
+            stages["right_align"],
+            stages["right_final"],
+            stages["right_grasp"],
+        ],
+        attempt=attempt,
         handle_yaw=handle_yaw,
-    )
-    _record_dual_arm_stage(
-        attempt, "transit", env, stages["left_transit"], stages["right_transit"], stage_ok
-    )
-    if not stage_ok:
-        return False
-
-    stage_ok = _step_two_arm_waypoints(
-        env,
-        stages["left_pre"],
-        stages["right_pre"],
-        GRIPPER_OPEN,
-        GRIPPER_OPEN,
-        180,
-        handle_yaw=handle_yaw,
-        follow_handle_yaw=True,
-    )
-    _record_dual_arm_stage(
-        attempt, "pre_grasp", env, stages["left_pre"], stages["right_pre"], stage_ok
-    )
-    if not stage_ok:
-        return False
-    stage_ok = _step_two_arm_waypoints(
-        env,
-        stages["left_align"],
-        stages["right_align"],
-        GRIPPER_OPEN,
-        GRIPPER_OPEN,
-        180,
-        handle_yaw=handle_yaw,
-    )
-    _record_dual_arm_stage(
-        attempt, "align", env, stages["left_align"], stages["right_align"], stage_ok
-    )
-    if not stage_ok:
-        return False
-    stage_ok = _step_two_arm_waypoints(
-        env,
-        stages["left_final"],
-        stages["right_final"],
-        GRIPPER_OPEN,
-        GRIPPER_OPEN,
-        140,
-        handle_yaw=handle_yaw,
-    )
-    final_descent_contact_ready = False
-    if not stage_ok and _dual_final_descent_close_enough(
-        env,
-        stages["left_grasp"],
-        stages["right_grasp"],
-    ):
-        stage_ok = True
-        final_descent_contact_ready = True
-    _record_dual_arm_stage(
-        attempt, "final_descent", env, stages["left_final"], stages["right_final"], stage_ok
-    )
-    if not stage_ok:
-        return False
-    stage_ok = final_descent_contact_ready or _step_two_arm_waypoints(
-        env,
-        stages["left_grasp"],
-        stages["right_grasp"],
-        GRIPPER_OPEN,
-        GRIPPER_OPEN,
-        140,
-        handle_yaw=handle_yaw,
-    )
-    _record_dual_arm_stage(
-        attempt, "grasp_pose", env, stages["left_grasp"], stages["right_grasp"], stage_ok
+        stage_name="approach",
     )
     if not stage_ok:
         return False
@@ -1089,111 +1418,25 @@ def execute_dual_handle_transfer(
     handle_yaw = get_handle_axis_yaw(env.obs, left_handle_pos, right_handle_pos)
     if attempt is not None and handle_yaw is not None:
         attempt["handle_yaw_target_rad"] = float(handle_yaw)
-
-    stage_ok = _step_dual_arm_waypoint_with_compensation(
+    stage_ok = _execute_dual_arm_approach_trajectory(
         env,
-        stages["left_transit"],
-        stages["right_transit"],
-        GRIPPER_OPEN,
-        GRIPPER_OPEN,
-        DUAL_TRANSIT_MAX_STEPS,
+        [
+            stages["left_transit"],
+            stages["left_pre"],
+            stages["left_align"],
+            stages["left_final"],
+            stages["left_grasp"],
+        ],
+        [
+            stages["right_transit"],
+            stages["right_pre"],
+            stages["right_align"],
+            stages["right_final"],
+            stages["right_grasp"],
+        ],
+        attempt=attempt,
         handle_yaw=handle_yaw,
-    )
-    _record_dual_arm_stage(
-        attempt, "transit", env, stages["left_transit"], stages["right_transit"], stage_ok
-    )
-    if not stage_ok:
-        return False
-
-    stage_ok = _step_two_arm_waypoints(
-        env,
-        stages["left_pre"],
-        stages["right_pre"],
-        GRIPPER_OPEN,
-        GRIPPER_OPEN,
-        180,
-        handle_yaw=handle_yaw,
-    )
-    _record_dual_arm_stage(
-        attempt, "pre_grasp", env, stages["left_pre"], stages["right_pre"], stage_ok
-    )
-    if not stage_ok:
-        return False
-    stage_ok = _step_two_arm_waypoints(
-        env,
-        stages["left_align"],
-        stages["right_align"],
-        GRIPPER_OPEN,
-        GRIPPER_OPEN,
-        180,
-        handle_yaw=handle_yaw,
-    )
-    _record_dual_arm_stage(
-        attempt, "align", env, stages["left_align"], stages["right_align"], stage_ok
-    )
-    if not stage_ok:
-        if remaining_attempts <= 1:
-            return False
-
-        next_left_handle, next_right_handle = get_handle_targets(env.obs)
-        if next_left_handle is None or next_right_handle is None:
-            return False
-        return execute_dual_handle_transfer(
-            env,
-            next_left_handle,
-            next_right_handle,
-            place_pos,
-            remaining_attempts=remaining_attempts - 1,
-            diagnostics=diagnostics,
-            targets_are_grasp_points=False,
-        )
-    stage_ok = _step_two_arm_waypoints(
-        env,
-        stages["left_final"],
-        stages["right_final"],
-        GRIPPER_OPEN,
-        GRIPPER_OPEN,
-        140,
-        handle_yaw=handle_yaw,
-    )
-    final_descent_contact_ready = False
-    if not stage_ok and _dual_final_descent_close_enough(
-        env,
-        stages["left_grasp"],
-        stages["right_grasp"],
-    ):
-        stage_ok = True
-        final_descent_contact_ready = True
-    _record_dual_arm_stage(
-        attempt, "final_descent", env, stages["left_final"], stages["right_final"], stage_ok
-    )
-    if not stage_ok:
-        if remaining_attempts <= 1:
-            return False
-
-        next_left_handle, next_right_handle = get_handle_targets(env.obs)
-        if next_left_handle is None or next_right_handle is None:
-            return False
-        return execute_dual_handle_transfer(
-            env,
-            next_left_handle,
-            next_right_handle,
-            place_pos,
-            remaining_attempts=remaining_attempts - 1,
-            diagnostics=diagnostics,
-            targets_are_grasp_points=False,
-        )
-    stage_ok = final_descent_contact_ready or _step_two_arm_waypoints(
-        env,
-        stages["left_grasp"],
-        stages["right_grasp"],
-        GRIPPER_OPEN,
-        GRIPPER_OPEN,
-        140,
-        handle_yaw=handle_yaw,
-    )
-    _record_dual_arm_stage(
-        attempt, "grasp_pose", env, stages["left_grasp"], stages["right_grasp"], stage_ok
+        stage_name="approach",
     )
     if not stage_ok:
         if remaining_attempts <= 1:
@@ -1279,15 +1522,23 @@ def execute_dual_handle_transfer(
     left_place_high = stages["left_lift"] + transfer_delta
     right_place_high = stages["right_lift"] + transfer_delta
 
-    stage_ok = _step_dual_arm_transfer_segments(
+    left_transfer_mid = (np.array(stages["left_lift"], dtype=float) + left_place_high) / 2.0
+    right_transfer_mid = (np.array(stages["right_lift"], dtype=float) + right_place_high) / 2.0
+    left_transfer_mid[2] = max(stages["left_lift"][2], left_place_high[2])
+    right_transfer_mid[2] = max(stages["right_lift"][2], right_place_high[2])
+
+    stage_ok = _follow_dual_arm_trajectory(
         env,
-        stages["left_lift"],
-        stages["right_lift"],
-        left_place_high,
-        right_place_high,
-        attempt,
-        "transfer_high",
+        [stages["left_lift"], left_transfer_mid, left_place_high],
+        [stages["right_lift"], right_transfer_mid, right_place_high],
+        GRIPPER_CLOSED,
+        GRIPPER_CLOSED,
+        stage_name="transfer_high",
+        attempt=attempt,
         handle_yaw=handle_yaw,
+        follow_handle_yaw=True,
+        object_height_guard=DUAL_TRANSFER_MIN_HEIGHT,
+        slip_stage_name="transfer_slip",
     )
     if not stage_ok:
         return False
@@ -1305,17 +1556,21 @@ def execute_dual_handle_transfer(
     else:
         left_place_low = left_place_high.copy()
         right_place_low = right_place_high.copy()
-    stage_ok = _step_two_arm_waypoints(
+
+    stage_ok = _follow_dual_arm_trajectory(
         env,
-        left_place_low,
-        right_place_low,
+        [env.obs["robot0_eef_pos"], left_place_low],
+        [env.obs["robot1_eef_pos"], right_place_low],
         GRIPPER_CLOSED,
         GRIPPER_CLOSED,
-        160,
+        stage_name="transfer_low",
+        attempt=attempt,
         handle_yaw=handle_yaw,
         follow_handle_yaw=True,
+        success_tolerance=DUAL_TRANSFER_TOLERANCE,
+        object_height_guard=place_pos[2] + DUAL_RELEASE_SURFACE_CLEARANCE * 0.5,
+        slip_stage_name="transfer_slip",
     )
-    _record_dual_arm_stage(attempt, "transfer_low", env, left_place_low, right_place_low, stage_ok)
     if not stage_ok:
         return False
 
@@ -1365,11 +1620,7 @@ def execute_push(env, obstacle_pos, direction, arm_idx=1):
     print(f"  Push waypoints: end={np.round(push_end, 4).tolist()}")
 
     def pushed_enough():
-        object_pos_after = get_primary_object_pos(env.obs)
-        if object_pos_before is None or object_pos_after is None:
-            return False
-        displacement_xy = np.linalg.norm(object_pos_after[:2] - object_pos_before[:2])
-        return displacement_xy >= OBJECT_MOVE_THRESHOLD
+        return did_object_move_with_push_success(env, object_pos_before, direction)
 
     if not actuate_gripper(env, arm_idx, GRIPPER_OPEN):
         return pushed_enough()
@@ -1383,8 +1634,8 @@ def execute_push(env, obstacle_pos, direction, arm_idx=1):
     if not actuate_gripper(env, arm_idx, GRIPPER_CLOSED, steps=PUSH_SETTLE_STEPS):
         return pushed_enough()
 
-    reached_push_end = _step_to_waypoint(env, push_end, arm_idx, GRIPPER_CLOSED, 160)
-    return reached_push_end or pushed_enough()
+    _step_to_waypoint(env, push_end, arm_idx, GRIPPER_CLOSED, 160)
+    return pushed_enough()
 
 
 def verify_grasp(env, arm_idx=0, object_pos_before=None):

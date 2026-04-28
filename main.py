@@ -7,6 +7,7 @@ import numpy as np
 import yaml
 
 from arm.controller import (
+    are_grippers_released,
     get_dual_arm_alignment_errors,
     execute_dual_handle_lift,
     execute_dual_handle_transfer,
@@ -18,8 +19,12 @@ from arm.controller import (
     get_default_grasp_target,
     get_gripper_width,
     get_handle_targets,
+    is_object_near_place,
+    is_object_place_height_valid,
+    is_object_upright,
     get_primary_object_pos,
     home_arms,
+    release_dual_grasp_with_clearance,
 )
 from arm.env_wrapper import RobosuiteEnvWrapper
 from fsm.demo_cycles import build_run_context
@@ -132,6 +137,16 @@ def refresh_detection_for_retry(env, perception_loop, perception_queue):
         return None
 
 
+def get_place_status(env, place_target_pos):
+    """Summarize which part of the place-success contract is currently failing."""
+    return {
+        "near_place": is_object_near_place(env, place_target_pos),
+        "released": are_grippers_released(env),
+        "height_valid": is_object_place_height_valid(env, place_target_pos),
+        "upright": is_object_upright(env),
+    }
+
+
 def classify_dual_grasp_failure(execution_summary):
     """Classify the latest dual-arm failure using stage-level diagnostics."""
     diagnostics = execution_summary.get("dual_arm_execution_diagnostics") or {}
@@ -226,11 +241,7 @@ def print_detection_summary(prefix, detected_objects):
 
 
 def select_dual_grasp_targets(env, latest_detection, vision_config):
-    """Select dual-arm grasp targets from observation handles, then vision fallback."""
-    left_target, right_target = get_handle_targets(env.obs)
-    if left_target is not None and right_target is not None:
-        return left_target, right_target, "handles"
-
+    """Select dual-arm grasp targets from vision first, then observation handles."""
     corrected_target_pos = get_corrected_vision_target(
         env=env,
         latest_detection=latest_detection,
@@ -246,6 +257,10 @@ def select_dual_grasp_targets(env, latest_detection, vision_config):
             axis_mode=vision_config.get("dual_grasp_axis", "robots"),
         )
         return left_target, right_target, "vision"
+
+    left_target, right_target = get_handle_targets(env.obs)
+    if left_target is not None and right_target is not None:
+        return left_target, right_target, "handles"
 
     return None, None, None
 
@@ -589,6 +604,7 @@ def main():
         place_check = False
         for retry_idx in range(PLACE_RETRY_ATTEMPTS + 1):
             place_check = check_object_at_place(env, place_target_pos)
+            place_status = get_place_status(env, place_target_pos)
             print(
                 "Object near place target before home: "
                 f"{'YES' if place_check else 'NO'}"
@@ -601,6 +617,30 @@ def main():
                 break
             if retry_idx >= PLACE_RETRY_ATTEMPTS:
                 break
+
+            if (
+                GRASP_MODE == "dual"
+                and place_status["near_place"]
+                and not place_status["released"]
+            ):
+                print("Place target reached but object is still held; retrying release only...")
+                grasp_success = release_dual_grasp_with_clearance(
+                    env,
+                    env.obs["robot0_eef_pos"],
+                    env.obs["robot1_eef_pos"],
+                    object_pos=get_primary_object_pos(env.obs),
+                    handle_yaw=None,
+                )
+                continue
+
+            if place_status["near_place"] and place_status["released"]:
+                print(
+                    "Place target reached and object released, but placement is not yet stable "
+                    f"(height_valid={place_status['height_valid']}, upright={place_status['upright']}); "
+                    "rechecking before any full retry..."
+                )
+                grasp_success = False
+                continue
 
             print(
                 "Place target missed; retrying pick-place "
