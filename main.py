@@ -201,11 +201,7 @@ def print_detection_summary(prefix, detected_objects):
 
 
 def select_dual_grasp_targets(env, latest_detection, vision_config):
-    """Select dual-arm grasp targets from observation handles, then vision fallback."""
-    left_target, right_target = get_handle_targets(env.obs)
-    if left_target is not None and right_target is not None:
-        return left_target, right_target, "handles"
-
+    """Select dual-arm grasp targets from vision first, then observation handles."""
     vision_target_pos = get_target_pos_from_detection(latest_detection)
     if vision_target_pos is not None:
         corrected_target_pos = np.array(vision_target_pos, dtype=float)
@@ -229,6 +225,10 @@ def select_dual_grasp_targets(env, latest_detection, vision_config):
             axis_mode=vision_config.get("dual_grasp_axis", "robots"),
         )
         return left_target, right_target, "vision"
+
+    left_target, right_target = get_handle_targets(env.obs)
+    if left_target is not None and right_target is not None:
+        return left_target, right_target, "handles"
 
     return None, None, None
 
