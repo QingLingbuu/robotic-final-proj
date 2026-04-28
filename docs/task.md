@@ -226,3 +226,74 @@
 - 感知链路已经基本打通；
 - 逻辑链路已经基本打通；
 - 当前最大的工程问题是执行层稳定性。
+## 2026-04-26 Execution Layer Update
+
+- Implemented a staged dual-arm grasp approach in `arm/controller.py`: high pre-grasp, mid alignment, short final descent, gripper settle, then lift.
+- Added adaptive near-target waypoint stepping to reduce overshoot during the last centimeters of approach.
+- Added dual-arm alignment diagnostics to `execution_summary` so runs now record per-arm Cartesian target error before the grasp sequence.
+- Immediate next verification: run repeated dual-arm transfer trials and compare `dual_arm_alignment_errors`, grasp completion rate, and post-lift object height against logs from 2026-04-25.
+- Added stage-level dual-arm execution diagnostics: each attempt now records `pre_grasp`, `align`, `final_descent`, `grasp_pose`, `lift`, and transfer-stage waypoint errors plus the first `failed_stage`.
+- Dual-arm retry attempts now refresh perception before re-grasping, and grasp failure routing distinguishes execution drift from physical slip for cleaner `n2/n3` statistics.
+- Push failure is now recorded in the execution summary and counted in the final run success decision.
+- Safe arm retract now returns a boolean result that is recorded in `execution_summary` and included in the final run success decision.
+- Dual-arm pre-grasp now has a `transit` fallback with single-arm compensation to reduce early stage failure on long approach paths.
+- Terminated `robosuite` episodes now short-circuit wrapper steps and retry loops instead of raising during late-stage checks.
+- Post-grasp home/push/retract now skip entirely once the episode has terminated, so the log separates terminal task failure from post-failure cleanup.
+- Corrected dual-arm target semantics: vision-derived dual targets are now treated as final grasp points, while observation handle targets still receive the handle-to-grasp z offset inside the controller. This removes the previous double application of `dual_grasp_height_offset` / `HANDLE_GRASP_Z_OFFSET`.
+- Changed dual-arm approach order from `pre_grasp` with `transit` fallback to an explicit `transit -> pre_grasp -> align -> final_descent -> grasp_pose` sequence, so long-distance motion stays high before descending near the object.
+- Added `transit` to execution-drift failure classification for cleaner `n2` accounting when the high approach stage cannot converge.
+- Added contact-aware final descent handling: if both arms are XY-aligned and remain only slightly above the grasp point, execution now proceeds to gripper close instead of forcing a lower waypoint that can terminate the episode.
+- Increased the high `transit` stage step budget so long-distance approach failures are less likely to be caused by premature timeout rather than true infeasibility.
+- Fixed final run accounting so post-terminal push failures are still reflected in `n2` and the console prints both FSM final state and overall `Run success`.
+- Dual-arm grasp target selection now prefers robosuite handle observations before falling back to vision-derived symmetric grasp points, so Task 1 starts with pot-handle grasping when handle poses are available.
+- Dual-arm transfer after lift now moves in short synchronized segments and checks object height after each segment to detect transfer slip before the pot is dragged or dropped.
+- Transfer-stage failures are now categorized as `physical_slip` because they occur after gripper closure and successful lift rather than during free-space approach.
+- Added a clearance-based dual-arm release sequence: partial open, retract away from the object center with a small lift, then fully open. This mitigates pot-handle snagging caused by fixed gripper orientation during object rotation.
+- Replaced the fixed-orientation limitation with closed-loop wrist-yaw commands derived from the current pot handle axis. Dual-arm approach, lift, carry, low placement, and release now use `action[3:6]` / `action[10:13]` instead of leaving EEF rotation at zero.
+- Added a transfer-specific waypoint tolerance so segmented carry stages do not fail on small residual tracking error when both arms remain close and the object is still lifted.
+- Added minimal wrist-yaw compliance during segmented carry and release (`action[5]` / `action[12]`) plus a short unsnag wiggle retry for transfer stages that appear to bind on a rotated pot handle.
+- Push is again part of final evaluation via `REQUIRE_PUSH_TEST_SUCCESS = True`; push failures count as execution drift and make the integration run fail.
+- Changed dual-arm release from an in-air open to a surface-aware place sequence: carry high, descend until the object is near the configured place-table height, partially open, retract outward/upward, then fully open.
+- Updated push execution to approach open from above, descend to a contact waypoint, briefly close for a stable pushing surface, then push through the target direction.
+- The current arm motion strategy uses segmented, stepwise waypoint moves for stability during dual-arm carry and release. This can make the arms feel more hesitant or "stuck" than a larger-step controller, so a future follow-up may restore larger move steps once contact stability is confirmed.
+
+## 2026-04-28 Fine-Tuning Guidance
+
+### 当前阶段结论
+
+当前阶段**不建议优先做重的训练微调**。更合适的顺序是先把参数级调优和执行稳定性做扎实，再考虑训练模型。
+
+### 现在优先做的事情
+
+- 调整双臂抓取与接近参数。
+- 优化 waypoint 分段、步长、容差和闭合前对齐误差。
+- 尽快完成 `T_world_cam` 的真实标定，减少对仿真修正的依赖。
+- 保持 `vision/`、`ipc/`、`fsm/`、`logs/` 接口稳定，不要为了微调提前改接口。
+
+### 适合先调的参数
+
+- `dual_grasp_lateral_offset`
+- `dual_grasp_height_offset`
+- `sim_xy_correction_alpha`
+- `MOVE_GAIN`
+- waypoint 步长与容差
+- 相机内参和外参
+
+### 什么时候可以开始训练微调
+
+只有在下面条件基本满足后，再进入训练微调窗口：
+
+- 感知已经稳定输出 `detected_objects`。
+- `perception_queue -> FSM -> arm execution` 的闭环已经连续跑通。
+- 当前主要失败已经从“看不准”转变为“换任务后泛化不足”。
+- 参数调优已经接近瓶颈。
+- 已经积累了足够的成功和失败样本，且失败类型可以区分。
+
+### 判断标准
+
+如果后续出现以下情况，就可以把训练微调提上日程：
+
+- 参数已经多轮调整，但收益明显下降。
+- 失败主要来自新物体、新场景或新任务分布。
+- 控制策略已经稳定，问题更多表现为泛化不足。
+- 任务数据和日志已经足以支持训练与回放分析。
