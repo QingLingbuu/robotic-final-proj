@@ -6,6 +6,11 @@ from vision.detected_objects import validate_detected_objects
 from fsm.state_machine import State
 
 
+def has_planning_candidates(detected_objects):
+    """Return whether a validated payload contains grasp candidates."""
+    return bool(detected_objects.get("grasp_candidates"))
+
+
 def drain_perception_queue(perception_queue):
     """Remove stale queued payloads before publishing a fresh observation."""
     while True:
@@ -44,6 +49,12 @@ def consume_perception_queue(fsm, perception_queue):
         fsm.handle_invalid_perception()
         return latest_detection, False
 
+    if not has_planning_candidates(latest_detection):
+        print("  Payload has no grasp candidates; routing to RETRY_SENSING.")
+        fsm.handle_invalid_perception()
+        return latest_detection, False
+
+    fsm.set_planning_candidates(latest_detection["grasp_candidates"])
     next_state = choose_next_state_from_detection(latest_detection)
     print(f"  Payload valid and ready; transitioning to {next_state.value}.")
     fsm.transition_to(next_state)

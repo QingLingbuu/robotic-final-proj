@@ -1,6 +1,7 @@
 """Minimal dry-run and real harness for the milestone-1 RL baseline contract."""
 
 import json
+from typing import Any, cast
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,15 +13,18 @@ from rl.contracts import load_rl_config, summarize_rl_config, validate_rl_config
 
 try:
     from stable_baselines3 import PPO
-    from stable_baselines3.common.callbacks import BaseCallback
+    from stable_baselines3.common.callbacks import BaseCallback as _SB3BaseCallback
+    BaseCallback: Any = _SB3BaseCallback
 except ModuleNotFoundError:
     PPO = None
-    BaseCallback = object
+    BaseCallback: Any = object
 
 try:
     import gymnasium as gym
+    GymEnvBase: Any = gym.Env
 except ModuleNotFoundError:
     gym = None
+    GymEnvBase: Any = object
 
 try:
     import imageio
@@ -28,7 +32,7 @@ except ModuleNotFoundError:
     imageio = None
 
 
-class RLVectorEnvAdapter(gym.Env if gym is not None else object):
+class RLVectorEnvAdapter(GymEnvBase):
     """SB3-compatible wrapper around the minimal RoboCasa env contract."""
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 20}
@@ -247,6 +251,40 @@ class RLVectorEnvAdapter(gym.Env if gym is not None else object):
             env.close()
 
 
+def build_selector_observation(payload, fsm_state, max_candidates):
+    """Build a padded, selector-friendly observation from a perception payload."""
+    candidates = list((payload or {}).get("grasp_candidates") or [])
+    resolved_max = max(int(max_candidates), 0)
+    features = []
+    for candidate in candidates[:resolved_max]:
+        features.append(
+            {
+                "id": int(candidate["id"]),
+                "score": float(candidate["score"]),
+                "gripper_width": float(candidate["gripper_width"]),
+                "pos": [float(value) for value in candidate["pos"]],
+                "grasp_type": str(candidate["grasp_type"]),
+                "mask": 1.0,
+            }
+        )
+    while len(features) < resolved_max:
+        features.append(
+            {
+                "id": -1,
+                "score": 0.0,
+                "gripper_width": 0.0,
+                "pos": [0.0, 0.0, 0.0],
+                "grasp_type": "padding",
+                "mask": 0.0,
+            }
+        )
+    return {
+        "fsm_state": str(fsm_state),
+        "candidate_count": min(len(candidates), resolved_max),
+        "candidate_features": features,
+    }
+
+
 class ProgressCallback(BaseCallback):
     """Simple heartbeat callback so long RoboCasa runs show visible progress."""
 
@@ -341,8 +379,8 @@ def run_train_smoke(config_path, dry_run=False, steps=None):
             f"[train] backend={config['backend']} task={config['task_name']} total_timesteps={total_timesteps} n_steps={n_steps}",
             flush=True,
         )
-        model = PPO("MlpPolicy", env, verbose=1, n_steps=n_steps)
-        model.learn(total_timesteps=total_timesteps, callback=ProgressCallback(progress_print_freq))
+        model = PPO("MlpPolicy", cast(Any, env), verbose=1, n_steps=n_steps)
+        model.learn(total_timesteps=total_timesteps, callback=cast(Any, ProgressCallback(progress_print_freq)))
         checkpoint_path = dirs["checkpoint_dir"] / f"{config['task_name']}-ppo-{total_timesteps}.zip"
         model.save(str(checkpoint_path))
         env.close()
@@ -360,7 +398,7 @@ def run_eval_smoke(config_path, checkpoint_path, dry_run=False, render_override=
             raise ModuleNotFoundError("stable_baselines3 must be installed for real RL evaluation.")
         should_render = config["render"]["enabled"] if render_override is None else bool(render_override)
         env = RLVectorEnvAdapter(config, render_enabled=should_render)
-        model = PPO.load(str(checkpoint), env=env)
+        model = PPO.load(str(checkpoint), env=cast(Any, env))
         success_count = 0
         episode_returns = []
         max_steps = int(config["termination"]["max_steps"])
@@ -392,7 +430,7 @@ def run_eval_smoke(config_path, checkpoint_path, dry_run=False, render_override=
                     preferred_frame = raw_obs.get(video_frame_key)
                     if preferred_frame is not None:
                         frame = preferred_frame
-                if save_video and frame is not None:
+                if save_video and frame is not None and video_writer is not None:
                     video_writer.append_data(frame)
                 episode_return += float(reward)
                 step_count += 1

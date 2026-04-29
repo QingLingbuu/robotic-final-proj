@@ -51,6 +51,42 @@ def infer_failure_modes_triggered(counts, execution_summary=None):
     return modes
 
 
+def extract_candidate_metadata(execution_summary=None):
+    """Extract stable candidate-selection metadata from execution summary."""
+    metadata = {
+        "candidate_count": 0,
+        "selected_candidate_id": None,
+        "selected_candidate_score": None,
+        "failure_stage": None,
+    }
+    if not execution_summary:
+        return metadata
+
+    selected_candidate = execution_summary.get("selected_candidate")
+    if isinstance(selected_candidate, dict):
+        metadata["selected_candidate_id"] = selected_candidate.get("id")
+        score = selected_candidate.get("score")
+        metadata["selected_candidate_score"] = None if score is None else float(score)
+        metadata["candidate_count"] = 1
+
+    for key in ("planning_candidates", "grasp_candidates"):
+        candidates = execution_summary.get(key)
+        if isinstance(candidates, list):
+            metadata["candidate_count"] = len(candidates)
+            break
+
+    diagnostics = execution_summary.get("dual_arm_execution_diagnostics")
+    if isinstance(diagnostics, dict):
+        latest_attempt = diagnostics.get("latest_attempt")
+        if isinstance(latest_attempt, dict):
+            metadata["failure_stage"] = latest_attempt.get("failed_stage")
+
+    if metadata["failure_stage"] is None:
+        metadata["failure_stage"] = execution_summary.get("failure_stage")
+
+    return metadata
+
+
 def build_run_log(
     run_id,
     config_version,
@@ -62,6 +98,7 @@ def build_run_log(
     execution_summary=None,
 ):
     """Build a run log matching the required JSON schema."""
+    candidate_metadata = extract_candidate_metadata(execution_summary)
     run_log = {
         "run_id": run_id,
         "commit_hash": get_commit_hash(),
@@ -80,6 +117,7 @@ def build_run_log(
         "counts": counts,
         "duration_sec": float(duration_sec),
         "context": context,
+        **candidate_metadata,
     }
     if execution_summary is not None:
         run_log["execution_summary"] = execution_summary
@@ -93,4 +131,3 @@ def write_run_log(run_log, output_dir="logs"):
     log_path = output_path / f"{run_log['run_id']}.json"
     log_path.write_text(json.dumps(run_log, indent=2), encoding="utf-8")
     return log_path
-

@@ -6,8 +6,14 @@ import unittest
 from pathlib import Path
 
 from runtime.bootstrap import project_root
-from rl.contracts import RLConfigError, load_rl_config, summarize_rl_config, validate_rl_config
-from rl.harness import ensure_artifact_dirs, run_eval_smoke, run_train_smoke
+from rl.contracts import (
+    RLConfigError,
+    build_selector_contract,
+    load_rl_config,
+    summarize_rl_config,
+    validate_rl_config,
+)
+from rl.harness import build_selector_observation, ensure_artifact_dirs, run_eval_smoke, run_train_smoke
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -47,6 +53,62 @@ class RLContractTests(unittest.TestCase):
         self.assertEqual(summary["backend"], "robosuite")
         self.assertEqual(summary["action_dimensions"], 7)
         self.assertIn("cube_pos", summary["observation_fields"])
+
+    def test_selector_contract_summary_is_available_when_configured(self):
+        config = validate_rl_config(load_rl_config(SINGLE_ARM_CONFIG_PATH))
+        config["selector"] = {
+            "enabled": True,
+            "max_candidates": 4,
+            "fallback_actions": ["clear", "resense"],
+        }
+
+        selector_contract = build_selector_contract(config)
+        summary = summarize_rl_config(config)
+
+        self.assertTrue(selector_contract["enabled"])
+        self.assertEqual(selector_contract["max_candidates"], 4)
+        self.assertEqual(selector_contract["action_meanings"], ["select_candidate", "clear", "resense"])
+        self.assertTrue(summary["selector_enabled"])
+        self.assertEqual(summary["selector_max_candidates"], 4)
+
+    def test_selector_observation_pads_candidates_and_encodes_fsm_state(self):
+        payload = {
+            "target": {"label": "cube", "pos": [0.1, 0.2, 0.3], "conf": 0.9, "timestamp": 1.0},
+            "grasp_candidates": [
+                {
+                    "id": 1,
+                    "pos": [0.1, 0.2, 0.3],
+                    "orientation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                    "gripper_width": 0.04,
+                    "score": 0.91,
+                    "grasp_type": "top_down",
+                },
+                {
+                    "id": 2,
+                    "pos": [0.2, 0.1, 0.35],
+                    "orientation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                    "gripper_width": 0.05,
+                    "score": 0.72,
+                    "grasp_type": "side_grasp",
+                },
+            ],
+            "obstacles": [],
+            "status": "ready",
+        }
+
+        observation = build_selector_observation(
+            payload=payload,
+            fsm_state="GRASPING",
+            max_candidates=4,
+        )
+
+        self.assertEqual(observation["candidate_count"], 2)
+        self.assertEqual(observation["fsm_state"], "GRASPING")
+        self.assertEqual(len(observation["candidate_features"]), 4)
+        self.assertEqual(observation["candidate_features"][0]["id"], 1)
+        self.assertEqual(observation["candidate_features"][1]["id"], 2)
+        self.assertEqual(observation["candidate_features"][2]["mask"], 0.0)
+        self.assertEqual(observation["candidate_features"][3]["mask"], 0.0)
 
     def test_train_dry_run_writes_checkpoint(self):
         checkpoint_path = run_train_smoke(SINGLE_ARM_CONFIG_PATH, dry_run=True, steps=3)
