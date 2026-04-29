@@ -53,7 +53,7 @@ class GroundingDinoDetector:
             if local_files_only:
                 raise RuntimeError(
                     "Grounding DINO model cache is missing or incomplete. "
-                    "Run `python scripts/cache_grounding_dino.py` once, then retry."
+                    "Run `python scripts/setup/cache_grounding_dino.py` once, then retry."
                 ) from exc
             raise
         self._device = device

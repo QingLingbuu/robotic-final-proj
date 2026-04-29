@@ -1,11 +1,13 @@
 import json
+import os
 import subprocess
 import sys
 import unittest
 from pathlib import Path
 
+from runtime.bootstrap import project_root
 from rl.contracts import RLConfigError, load_rl_config, summarize_rl_config, validate_rl_config
-from rl.harness import run_eval_smoke, run_train_smoke
+from rl.harness import ensure_artifact_dirs, run_eval_smoke, run_train_smoke
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -43,7 +45,7 @@ class RLContractTests(unittest.TestCase):
         config = validate_rl_config(load_rl_config(ROBOSUITE_SINGLE_ARM_CONFIG_PATH))
         summary = summarize_rl_config(config)
         self.assertEqual(summary["backend"], "robosuite")
-        self.assertEqual(summary["action_dimensions"], 4)
+        self.assertEqual(summary["action_dimensions"], 7)
         self.assertIn("cube_pos", summary["observation_fields"])
 
     def test_train_dry_run_writes_checkpoint(self):
@@ -66,6 +68,17 @@ class RLContractTests(unittest.TestCase):
         self.assertIn("episode_return", payload)
         self.assertIn("episode_length", payload)
         self.assertIn("failure_modes_triggered", payload)
+
+    def test_artifact_dirs_resolve_from_project_root_even_if_cwd_changes(self):
+        config = validate_rl_config(load_rl_config(SINGLE_ARM_CONFIG_PATH))
+        original_cwd = Path.cwd()
+        try:
+            os.chdir(PROJECT_ROOT / "scripts")
+            dirs = ensure_artifact_dirs(config)
+        finally:
+            os.chdir(original_cwd)
+        self.assertEqual(dirs["root_dir"], project_root() / "outputs" / "rl")
+        self.assertEqual(dirs["video_dir"], project_root() / "outputs" / "rl" / "videos")
 
     def test_train_script_print_summary(self):
         result = subprocess.run(

@@ -29,7 +29,7 @@ REQUIRED_TERMINATION_KEYS = {"max_steps", "success_conditions", "failure_conditi
 REQUIRED_METRICS_KEYS = {"primary", "report"}
 REQUIRED_TRAIN_KEYS = {"smoke_steps", "checkpoint_every", "n_steps", "progress_print_freq"}
 REQUIRED_EVAL_KEYS = {"seed_set", "episodes"}
-REQUIRED_ARTIFACT_KEYS = {"root_dir", "checkpoint_dir", "metrics_dir"}
+REQUIRED_ARTIFACT_KEYS = {"root_dir", "checkpoint_dir", "metrics_dir", "video_dir"}
 REQUIRED_RENDER_KEYS = {"enabled", "mode"}
 
 

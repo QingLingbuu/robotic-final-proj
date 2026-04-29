@@ -60,9 +60,10 @@ eval:
     - 7
   episodes: 3
 artifacts:
-  root_dir: .sisyphus/artifacts/rl
+  root_dir: outputs/rl
   checkpoint_dir: checkpoints
   metrics_dir: metrics
+  video_dir: videos
 render:
   enabled: false
   mode: human

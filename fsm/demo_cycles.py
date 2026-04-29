@@ -1,6 +1,6 @@
 """Minimal demo cycle drivers for perception, clearing, and grasp paths."""
 
-from ipc.perception_queue import publish_detected_objects
+from runtime.perception_queue import publish_detected_objects
 from vision.detected_objects import build_detected_objects
 
 from fsm.perception_cycle import consume_perception_queue
