@@ -24,10 +24,14 @@ torchvision==0.22.1
 gymnasium==0.29.1
 stable-baselines3
 
-robosuite==1.5.2
 transformers==4.41.2
 
 # Install RoboCasa after the separate RoboCasa/RL env is created.
-# The recommended path is editable install from the official repository:
+# The recommended path is editable install from third_party/:
+#   mkdir third_party
+#   cd third_party
+#   git clone https://github.com/ARISE-Initiative/robosuite
 #   git clone https://github.com/robocasa/robocasa
-#   pip install -e ./robocasa
+#   cd ..
+#   pip install -e ./third_party/robosuite
+#   pip install -e ./third_party/robocasa

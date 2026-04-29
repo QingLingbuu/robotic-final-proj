@@ -4,6 +4,10 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
+from runtime.bootstrap import ensure_runtime_paths
+
+ensure_runtime_paths()
+
 try:
     import gymnasium as gym
 except ModuleNotFoundError:

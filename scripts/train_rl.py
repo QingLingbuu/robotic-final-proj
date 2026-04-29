@@ -4,9 +4,14 @@ import argparse
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from runtime.bootstrap import ensure_runtime_paths
+
+ensure_runtime_paths()
 
 from rl.harness import run_train_smoke, validate_and_summarize_config
 

@@ -1,6 +1,6 @@
 """Perception-to-FSM cycle helpers for live RGB-D observations."""
 
-from ipc.perception_queue import Empty, read_detected_objects
+from runtime.perception_queue import Empty, read_detected_objects
 from vision.detected_objects import validate_detected_objects
 
 from fsm.state_machine import State

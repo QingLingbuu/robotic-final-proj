@@ -29,8 +29,8 @@ from arm.env_wrapper import RobosuiteEnvWrapper
 from fsm.demo_cycles import build_run_context
 from fsm.perception_cycle import run_live_perception_cycle
 from fsm.state_machine import State, TaskStateMachine
-from ipc.perception_queue import PERCEPTION_QUEUE_NAME, create_perception_queue
-from logs.run_logger import build_run_log, write_run_log
+from runtime.perception_queue import PERCEPTION_QUEUE_NAME, create_perception_queue
+from runtime.run_logger import build_run_log, write_run_log
 from vision.perception_loop import VisionPerceptionLoop, VisionPerceptionWorker
 
 KEEP_RENDER_OPEN = False  # Set to True to keep render window open after test

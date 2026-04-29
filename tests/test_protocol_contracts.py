@@ -3,14 +3,14 @@ import unittest
 from queue import Empty
 
 from fsm.state_machine import State, TaskStateMachine
-from ipc.perception_queue import (
+from runtime.perception_queue import (
     PERCEPTION_QUEUE_NAME,
     PERCEPTION_QUEUE_TIMEOUT_SEC,
     create_perception_queue,
     publish_detected_objects,
     read_detected_objects,
 )
-from logs.run_logger import build_run_log, infer_failure_mode, infer_failure_modes_triggered
+from runtime.run_logger import build_run_log, infer_failure_mode, infer_failure_modes_triggered
 from vision.detected_objects import MAX_OBSTACLES, build_detected_objects, validate_detected_objects
 
 

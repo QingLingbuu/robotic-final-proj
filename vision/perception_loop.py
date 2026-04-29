@@ -5,7 +5,7 @@ import time
 
 import numpy as np
 
-from ipc.perception_queue import publish_detected_objects
+from runtime.perception_queue import publish_detected_objects
 from vision.coord_transform import camera_to_world, pixel_to_3d
 from vision.detected_objects import MAX_OBSTACLES, build_detected_objects
 from vision.detector import build_detector

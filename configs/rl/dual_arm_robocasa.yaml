@@ -47,6 +47,8 @@ metrics:
 train:
   smoke_steps: 8
   checkpoint_every: 4
+  n_steps: 64
+  progress_print_freq: 20
 eval:
   seed_set:
     - 7
@@ -54,9 +56,10 @@ eval:
     - 42
   episodes: 3
 artifacts:
-  root_dir: .sisyphus/artifacts/rl
+  root_dir: outputs/rl
   checkpoint_dir: checkpoints
   metrics_dir: metrics
+  video_dir: videos
 render:
   enabled: false
   mode: human

@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from arm.env_wrapper import create_env_wrapper
+from runtime.bootstrap import resolve_repo_path
 from rl.contracts import load_rl_config, summarize_rl_config, validate_rl_config
 
 try:
@@ -260,12 +261,19 @@ class ProgressCallback(BaseCallback):
 
 
 def ensure_artifact_dirs(config):
-    root_dir = Path(config["artifacts"]["root_dir"])
+    root_dir = resolve_repo_path(config["artifacts"]["root_dir"])
     checkpoint_dir = root_dir / config["artifacts"]["checkpoint_dir"]
     metrics_dir = root_dir / config["artifacts"]["metrics_dir"]
+    video_dir = root_dir / config["artifacts"]["video_dir"]
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     metrics_dir.mkdir(parents=True, exist_ok=True)
-    return {"root_dir": root_dir, "checkpoint_dir": checkpoint_dir, "metrics_dir": metrics_dir}
+    video_dir.mkdir(parents=True, exist_ok=True)
+    return {
+        "root_dir": root_dir,
+        "checkpoint_dir": checkpoint_dir,
+        "metrics_dir": metrics_dir,
+        "video_dir": video_dir,
+    }
 
 
 def get_latest_checkpoint(config):
@@ -364,9 +372,9 @@ def run_eval_smoke(config_path, checkpoint_path, dry_run=False, render_override=
                 raise ModuleNotFoundError("imageio must be installed to save evaluation video.")
             if video_path is None:
                 dirs = ensure_artifact_dirs(config)
-                resolved_video_path = dirs["metrics_dir"] / f"{config['task_name']}-eval-rollout.mp4"
+                resolved_video_path = dirs["video_dir"] / f"{config['task_name']}-eval-rollout.mp4"
             else:
-                resolved_video_path = Path(video_path)
+                resolved_video_path = resolve_repo_path(video_path)
             resolved_video_path.parent.mkdir(parents=True, exist_ok=True)
             video_writer = imageio.get_writer(str(resolved_video_path), fps=20)
         for seed in config["eval"]["seed_set"][: int(config["eval"]["episodes"])]:

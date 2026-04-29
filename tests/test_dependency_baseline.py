@@ -19,37 +19,32 @@ class DependencyBaselineTests(unittest.TestCase):
         self.assertIn("torchvision==0.22.1", content)
         self.assertIn("gymnasium==0.29.1", content)
         self.assertIn("stable-baselines3", content)
-        self.assertIn("robosuite==1.5.2", content)
         self.assertIn("mujoco==3.3.1", content)
 
     def test_robocasa_rl_environment_file_exists(self):
         env_path = PROJECT_ROOT / "environment-robocasa-rl.yml"
         self.assertTrue(env_path.exists())
         content = env_path.read_text(encoding="utf-8")
-        self.assertIn("python=3.11", content)
-        self.assertIn("numpy=2.2.5", content)
-        self.assertIn("pytorch=2.7.1", content)
-        self.assertIn("torchvision=0.22.1", content)
-        self.assertIn("gymnasium==0.29.1", content)
+        self.assertIn("python=3.10", content)
+        self.assertIn("- -r requirements-robocasa-rl.txt", content)
         self.assertIn("RoboCasa/RL lives in its own env", content)
-        self.assertIn("stable-baselines3", content)
-        self.assertIn("robosuite==1.5.2", content)
+        self.assertIn("Use conda only as a lightweight Python + pip shell", content)
 
     def test_setup_printer_runs(self):
         result = subprocess.run(
-            [sys.executable, "scripts/print_robocasa_rl_setup.py"],
+            [sys.executable, "scripts/setup/print_robocasa_rl_setup.py"],
             cwd=PROJECT_ROOT,
             capture_output=True,
             text=True,
             check=True,
         )
         self.assertIn("RoboCasa + RL baseline setup", result.stdout)
-        self.assertIn("environment-robocasa-rl.yml", result.stdout)
-        self.assertIn("scripts/check_robocasa_rl_deps.py", result.stdout)
+        self.assertIn("pip install -r requirements-robocasa-rl.txt", result.stdout)
+        self.assertIn("scripts/setup/check_robocasa_rl_deps.py", result.stdout)
 
     def test_dependency_smoke_script_reports_json(self):
         result = subprocess.run(
-            [sys.executable, "scripts/check_robocasa_rl_deps.py"],
+            [sys.executable, "scripts/setup/check_robocasa_rl_deps.py"],
             cwd=PROJECT_ROOT,
             capture_output=True,
             text=True,
