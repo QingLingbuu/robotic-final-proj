@@ -7,6 +7,7 @@
 # 🤖 语义驱动双臂协作桌面整理系统 - 开发执行手册 (V3.1 Final)
 
 > 当前平台策略：项目目标保持为 **RoboCasa 风格家庭/桌面整理任务**，但现阶段优先基于 **robosuite** 完成感知、IPC、FSM 与执行链路的联调。
+> 需要注意：**robosuite/mink 基线** 与 **RoboCasa/RL 基线** 现在应视为两个独立环境；真实 RoboCasa 安装已拉入 `numpy 2.2.5`、`torch 2.7.1`、`torchvision 0.22.1`、`gymnasium 0.29.1`，而 `mink 0.0.5` 需要 `numpy<2.0.0`。
 > 在核心流程稳定后，再迁移环境层到 **RoboCasa**。迁移时优先复用既有接口，尤其保持 `vision/`、`ipc/`、`fsm/` 和 `logs/` 的协议稳定。
 
 ## 1. 系统架构与 3D 感知协议

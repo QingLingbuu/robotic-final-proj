@@ -1,0 +1,63 @@
+task_name: single_arm_robocasa_reach_grasp
+backend: robocasa
+env:
+  task_name: robocasa/PickPlaceCounterToCabinet
+  split: pretrain
+policy:
+  topology: single_arm_ppo_policy
+  shared_policy: false
+observation:
+  source: privileged_state
+  fields:
+    - robot0_eef_pos
+    - robot0_eef_quat
+    - robot0_gripper_qpos
+    - target_object_pos
+    - target_object_quat
+action:
+  type: single_arm_delta_pose_plus_gripper
+  dimensions: 4
+reward:
+  coefficients:
+    approach_target: 2.0
+    successful_close: 5.0
+    successful_lift: 8.0
+    collision_penalty: -2.0
+    timeout_penalty: -0.05
+termination:
+  max_steps: 120
+  success_conditions:
+    - gripper_closed_on_target
+    - object_lifted_above_threshold
+  failure_conditions:
+    - collision
+    - timeout
+    - object_drop
+metrics:
+  primary: success_rate
+  report:
+    - success_rate
+    - episode_return
+    - episode_length
+    - collision_count
+    - failure_modes_triggered
+train:
+  smoke_steps: 8
+  checkpoint_every: 4
+  total_timesteps: 5000
+  n_steps: 64
+  progress_print_freq: 20
+eval:
+  seed_set:
+    - 7
+    - 11
+    - 42
+  episodes: 1
+artifacts:
+  root_dir: .sisyphus/artifacts/rl
+  checkpoint_dir: checkpoints
+  metrics_dir: metrics
+render:
+  enabled: true
+  mode: human
+  frame_key: video.robot0_eye_in_hand
