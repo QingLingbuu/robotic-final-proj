@@ -28,3 +28,24 @@ single_vision_grasp_offset:
 use_sim_height_correction: true
 sim_xy_correction_alpha: 0.75
 dual_grasp_axis: y
+
+candidate_types:
+  - top_down
+  - handle_grasp
+default_gripper_width: 0.04
+handle_gripper_width: 0.03
+handle_labels:
+  - cup
+  - mug
+handle_min_points: 8
+handle_radial_ratio: 0.15
+handle_radial_offset: 0.01
+handle_height_quantiles:
+  - 0.25
+  - 0.85
+handle_width_margin: 0.01
+handle_width_min: 0.02
+top_down_surface_quantile: 0.85
+top_down_penetration_offset: 0.01
+top_down_width_margin: 0.01
+top_down_width_min: 0.04

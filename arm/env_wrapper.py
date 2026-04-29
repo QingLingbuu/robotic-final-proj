@@ -23,6 +23,11 @@ try:
 except ModuleNotFoundError:
     suite = None
 
+try:
+    import robosuite.utils.camera_utils as robosuite_camera_utils
+except ModuleNotFoundError:
+    robosuite_camera_utils = None
+
 
 class BaseEnvWrapper(ABC):
     """Backend-agnostic manipulation environment contract."""
@@ -60,6 +65,10 @@ class BaseEnvWrapper(ABC):
     @abstractmethod
     def get_camera_extrinsics(self):
         """Return camera extrinsics for the active environment."""
+
+    def get_camera_to_world_transform(self):
+        """Return a 4x4 camera-to-world transform when the backend supports it."""
+        raise NotImplementedError("camera_to_world transform is not available for this backend.")
 
     @abstractmethod
     def get_object_dynamics_summary(self):
@@ -113,6 +122,9 @@ class RobosuiteEnvWrapper(BaseEnvWrapper):
             default_config.update(config)
 
         self.camera_config = camera_config or {}
+        self.camera_name = str(default_config["camera_names"][0])
+        self.camera_width = int(default_config["camera_widths"][0])
+        self.camera_height = int(default_config["camera_heights"][0])
         self.env = suite.make(**default_config)
         self.obs = self._reset_env()
         self.action_dim = self.env.action_dim
@@ -146,8 +158,23 @@ class RobosuiteEnvWrapper(BaseEnvWrapper):
 
     def get_observation(self):
         """Get current observation from environment."""
-        rgb = self.obs.get("frontview_image")
-        depth = self.obs.get("frontview_depth")
+        rgb = self.obs.get(f"{self.camera_name}_image")
+        depth = self.obs.get(f"{self.camera_name}_depth")
+        if rgb is not None:
+            rgb = np.asarray(rgb)[::-1].copy()
+        if depth is not None:
+            depth = np.asarray(depth, dtype=float)[::-1].copy()
+            if depth.ndim == 3 and depth.shape[-1] == 1:
+                depth = depth[..., 0]
+            if (
+                robosuite_camera_utils is not None
+                and np.all(depth >= 0.0)
+                and np.all(depth <= 1.0)
+            ):
+                depth = robosuite_camera_utils.get_real_depth_map(
+                    sim=self.env.sim,
+                    depth_map=depth,
+                )
 
         proprioception = {
             "robot0_eef_pos": self.obs["robot0_eef_pos"],
@@ -206,7 +233,21 @@ class RobosuiteEnvWrapper(BaseEnvWrapper):
         return self.obs, reward, done, info
 
     def get_camera_intrinsics(self):
-        """Return intrinsics from config or a future runtime camera API."""
+        """Return intrinsics from the active robosuite camera when available."""
+        if robosuite_camera_utils is not None:
+            intrinsic = robosuite_camera_utils.get_camera_intrinsic_matrix(
+                sim=self.env.sim,
+                camera_name=self.camera_name,
+                camera_height=self.camera_height,
+                camera_width=self.camera_width,
+            )
+            return (
+                float(intrinsic[0, 0]),
+                float(intrinsic[1, 1]),
+                float(intrinsic[0, 2]),
+                float(intrinsic[1, 2]),
+            )
+
         required_keys = ("fx", "fy", "cx", "cy")
         if all(key in self.camera_config for key in required_keys):
             return tuple(float(self.camera_config[key]) for key in required_keys)
@@ -217,7 +258,17 @@ class RobosuiteEnvWrapper(BaseEnvWrapper):
         )
 
     def get_camera_extrinsics(self):
-        """Return T_world_cam from config until the runtime camera API is wired in."""
+        """Return world-to-camera extrinsics compatible with vision.coord_transform.camera_to_world."""
+        if robosuite_camera_utils is not None:
+            camera_to_world = robosuite_camera_utils.get_camera_extrinsic_matrix(
+                sim=self.env.sim,
+                camera_name=self.camera_name,
+            )
+            world_to_camera = np.linalg.inv(camera_to_world)
+            rotation = np.array(world_to_camera[:3, :3], dtype=float)
+            translation = np.array(world_to_camera[:3, 3], dtype=float)
+            return rotation, translation
+
         transform = self.camera_config.get("T_world_cam")
         if transform is None:
             raise ValueError(
@@ -230,6 +281,23 @@ class RobosuiteEnvWrapper(BaseEnvWrapper):
         if rotation.shape != (3, 3) or translation.shape != (3,):
             raise ValueError("T_world_cam must contain a 3x3 rotation and 3D translation.")
         return rotation, translation
+
+    def get_camera_to_world_transform(self):
+        """Return the active robosuite pixel-to-world transform."""
+        if robosuite_camera_utils is not None:
+            world_to_camera = robosuite_camera_utils.get_camera_transform_matrix(
+                    sim=self.env.sim,
+                    camera_name=self.camera_name,
+                    camera_height=self.camera_height,
+                    camera_width=self.camera_width,
+            )
+            return np.linalg.inv(np.array(world_to_camera, dtype=float))
+
+        rotation, translation = self.get_camera_extrinsics()
+        world_to_camera = np.eye(4, dtype=float)
+        world_to_camera[:3, :3] = np.asarray(rotation, dtype=float)
+        world_to_camera[:3, 3] = np.asarray(translation, dtype=float)
+        return np.linalg.inv(world_to_camera)
 
     def get_object_dynamics_summary(self):
         """Return a lightweight MuJoCo summary for object mobility checks."""
@@ -338,6 +406,21 @@ class RobocasaEnvWrapper(BaseEnvWrapper):
         self.camera_config = camera_config or {}
         self.task_name = default_config["task_name"]
         self.render_mode = default_config.get("render_mode")
+        camera_names = default_config.get("camera_names", "robot0_agentview_center")
+        if isinstance(camera_names, (list, tuple)):
+            self.camera_name = str(camera_names[0])
+        else:
+            self.camera_name = str(camera_names)
+        self.active_camera_name = self.camera_name
+        self.active_rgb_key = None
+        self.active_depth_key = None
+        self._latest_raw_obs = None
+        self._latest_rgb_frame = None
+        self._latest_depth_frame = None
+        camera_heights = default_config.get("camera_heights", 480)
+        camera_widths = default_config.get("camera_widths", 640)
+        self.camera_height = int(camera_heights[0] if isinstance(camera_heights, (list, tuple)) else camera_heights)
+        self.camera_width = int(camera_widths[0] if isinstance(camera_widths, (list, tuple)) else camera_widths)
         env_kwargs = {key: value for key, value in default_config.items() if key not in {"task_name", "render_mode"}}
         if self.render_mode is not None:
             env_kwargs["render_mode"] = self.render_mode
@@ -345,6 +428,7 @@ class RobocasaEnvWrapper(BaseEnvWrapper):
         self._action_keys = []
         self.action_dim = self._infer_action_dim(self.env.action_space)
         self.obs, self._last_info = self._reset_env()
+        self._refresh_live_camera_cache()
 
     def _infer_action_dim(self, action_space):
         if hasattr(action_space, "shape") and action_space.shape is not None:
@@ -390,15 +474,97 @@ class RobocasaEnvWrapper(BaseEnvWrapper):
             return np.zeros(0, dtype=np.float32)
         return np.asarray(obs, dtype=np.float32).reshape(-1)
 
-    def get_observation(self):
-        flat_obs = self._flatten_obs(self.obs)
-        proprioception = {"flat_observation": flat_obs}
-        return None, None, proprioception
+    @staticmethod
+    def _normalize_image_like(value):
+        array_value = np.asarray(value)
+        if array_value.ndim == 3 and array_value.shape[0] in {1, 3, 4} and array_value.shape[-1] not in {1, 3, 4}:
+            array_value = np.transpose(array_value, (1, 2, 0))
+        return array_value
 
-    def get_flat_observation(self):
-        return self._flatten_obs(self.obs)
+    @staticmethod
+    def _normalize_rgb_uint8(value):
+        frame = np.asarray(value)
+        if frame.ndim == 3 and frame.shape[0] in {1, 3, 4} and frame.shape[-1] not in {1, 3, 4}:
+            frame = np.transpose(frame, (1, 2, 0))
+        if frame.dtype.kind == "f":
+            max_value = float(np.nanmax(frame)) if frame.size else 0.0
+            if max_value <= 1.0:
+                frame = np.clip(frame * 255.0, 0.0, 255.0)
+            else:
+                frame = np.clip(frame, 0.0, 255.0)
+        return np.asarray(frame, dtype=np.uint8)
 
-    def get_raw_observation(self):
+    def _lookup_camera_modalities(self):
+        image_specs = [
+            (f"video.{self.camera_name}", self.camera_name),
+            ("video.robot0_agentview_left", "robot0_agentview_left"),
+            ("video.robot0_agentview_right", "robot0_agentview_right"),
+            ("video.robot0_eye_in_hand", "robot0_eye_in_hand"),
+            ("robot0_agentview_left_image", "robot0_agentview_left"),
+            ("robot0_agentview_right_image", "robot0_agentview_right"),
+            ("robot0_eye_in_hand_image", "robot0_eye_in_hand"),
+            (f"{self.camera_name}_image", self.camera_name),
+            ("agentview_image", "agentview"),
+            ("robot0_agentview_center_image", "robot0_agentview_center"),
+            ("frontview_image", "frontview"),
+        ]
+        depth_specs = [
+            (f"video.{self.camera_name}_depth", self.camera_name),
+            (f"{self.camera_name}_depth", self.camera_name),
+            ("robot0_agentview_left_depth", "robot0_agentview_left"),
+            ("robot0_agentview_right_depth", "robot0_agentview_right"),
+            ("robot0_eye_in_hand_depth", "robot0_eye_in_hand"),
+            ("agentview_depth", "agentview"),
+            ("robot0_agentview_center_depth", "robot0_agentview_center"),
+            ("frontview_depth", "frontview"),
+        ]
+
+        candidate_obs_dicts = []
+        if isinstance(self.obs, dict):
+            candidate_obs_dicts.append(self.obs)
+        raw_obs = self.get_raw_observation()
+        if isinstance(raw_obs, dict) and raw_obs is not self.obs:
+            candidate_obs_dicts.append(raw_obs)
+
+        rgb = None
+        depth = None
+        for obs_dict in candidate_obs_dicts:
+            for key, camera_name in image_specs:
+                if key in obs_dict:
+                    rgb = self._normalize_rgb_uint8(obs_dict[key])
+                    self.active_rgb_key = key
+                    self.active_camera_name = camera_name
+                    break
+            if rgb is not None:
+                break
+        for obs_dict in candidate_obs_dicts:
+            for key, camera_name in depth_specs:
+                if key in obs_dict:
+                    depth = self._normalize_image_like(obs_dict[key])
+                    self.active_depth_key = key
+                    self.active_camera_name = camera_name
+                    break
+            if depth is not None:
+                break
+
+        if depth is not None:
+            depth = np.asarray(depth, dtype=float)
+            if depth.ndim == 3 and depth.shape[-1] == 1:
+                depth = depth[..., 0]
+            if (
+                robosuite_camera_utils is not None
+                and np.all(depth >= 0.0)
+                and np.all(depth <= 1.0)
+            ):
+                sim = self.get_sim()
+                if sim is not None:
+                    depth = robosuite_camera_utils.get_real_depth_map(
+                        sim=sim,
+                        depth_map=depth,
+                    )
+        return rgb, depth
+
+    def _fetch_live_raw_observation(self):
         base_env = getattr(self.env, "unwrapped", None)
         if base_env is not None and hasattr(base_env, "env") and hasattr(base_env.env, "_get_observations"):
             try:
@@ -406,6 +572,62 @@ class RobocasaEnvWrapper(BaseEnvWrapper):
             except Exception:  # noqa: BLE001 - best-effort raw observation path for reward shaping
                 pass
         return self.obs
+
+    @staticmethod
+    def _obs_has_camera_data(obs):
+        if not isinstance(obs, dict):
+            return False
+        for key in obs.keys():
+            key = str(key)
+            if key.startswith("video.") or key.endswith("_image") or key.endswith("_depth"):
+                return True
+        return False
+
+    def _refresh_live_camera_cache(self):
+        preferred_obs = self.obs if self._obs_has_camera_data(self.obs) else None
+        self._latest_raw_obs = preferred_obs if preferred_obs is not None else self._fetch_live_raw_observation()
+        if isinstance(self._latest_raw_obs, dict):
+            cached_obs = self.obs
+            try:
+                self.obs = self._latest_raw_obs
+                rgb, depth = self._lookup_camera_modalities()
+            finally:
+                self.obs = cached_obs
+            self._latest_rgb_frame = None if rgb is None else np.asarray(rgb).copy()
+            self._latest_depth_frame = None if depth is None else np.asarray(depth).copy()
+        else:
+            self._latest_rgb_frame = None
+            self._latest_depth_frame = None
+
+    def get_observation(self):
+        flat_obs = self._flatten_obs(self.obs)
+        rgb = None if self._latest_rgb_frame is None else np.asarray(self._latest_rgb_frame).copy()
+        depth = None if self._latest_depth_frame is None else np.asarray(self._latest_depth_frame).copy()
+        if rgb is None or depth is None:
+            fallback_rgb, fallback_depth = self._lookup_camera_modalities()
+            if rgb is None:
+                rgb = fallback_rgb
+            if depth is None:
+                depth = fallback_depth
+        proprioception = {"flat_observation": flat_obs}
+        return rgb, depth, proprioception
+
+    def get_flat_observation(self):
+        return self._flatten_obs(self.obs)
+
+    def get_raw_observation(self):
+        if self._latest_raw_obs is not None:
+            return self._latest_raw_obs
+        return self._fetch_live_raw_observation()
+
+    def get_sim(self):
+        base_env = getattr(self.env, "unwrapped", None)
+        if base_env is not None and hasattr(base_env, "env") and hasattr(base_env.env, "sim"):
+            return base_env.env.sim
+        inner_env = getattr(self.env, "env", None)
+        if inner_env is not None and hasattr(inner_env, "sim"):
+            return inner_env.sim
+        return None
 
     def get_action_layout(self):
         return list(self._action_keys)
@@ -415,23 +637,65 @@ class RobocasaEnvWrapper(BaseEnvWrapper):
             return self.obs, 0.0, True, {"terminated": True}
 
         self.obs, reward, terminated, truncated, info = self.env.step(self.format_action(action))
+        self._refresh_live_camera_cache()
         self._episode_terminated = bool(terminated or truncated)
         self.done = bool(terminated or truncated)
         return self.obs, reward, self.done, info
 
     def get_camera_intrinsics(self):
+        sim = self.get_sim()
+        if sim is not None and robosuite_camera_utils is not None:
+            intrinsic = robosuite_camera_utils.get_camera_intrinsic_matrix(
+                sim=sim,
+                camera_name=self.active_camera_name,
+                camera_height=self.camera_height,
+                camera_width=self.camera_width,
+            )
+            return (
+                float(intrinsic[0, 0]),
+                float(intrinsic[1, 1]),
+                float(intrinsic[0, 2]),
+                float(intrinsic[1, 2]),
+            )
         required_keys = ("fx", "fy", "cx", "cy")
         if all(key in self.camera_config for key in required_keys):
             return tuple(float(self.camera_config[key]) for key in required_keys)
         raise ValueError("RoboCasa camera intrinsics must come from config or runtime camera metadata.")
 
     def get_camera_extrinsics(self):
+        sim = self.get_sim()
+        if sim is not None and robosuite_camera_utils is not None:
+            camera_to_world = robosuite_camera_utils.get_camera_extrinsic_matrix(
+                sim=sim,
+                camera_name=self.active_camera_name,
+            )
+            world_to_camera = np.linalg.inv(camera_to_world)
+            rotation = np.array(world_to_camera[:3, :3], dtype=float)
+            translation = np.array(world_to_camera[:3, 3], dtype=float)
+            return rotation, translation
         transform = self.camera_config.get("T_world_cam")
         if transform is None:
             raise ValueError("RoboCasa camera extrinsics must come from config or runtime camera metadata.")
         rotation = np.array(transform["rotation"], dtype=float)
         translation = np.array(transform["translation"], dtype=float)
         return rotation, translation
+
+    def get_camera_to_world_transform(self):
+        sim = self.get_sim()
+        if sim is not None and robosuite_camera_utils is not None:
+            world_to_camera = robosuite_camera_utils.get_camera_transform_matrix(
+                sim=sim,
+                camera_name=self.active_camera_name,
+                camera_height=self.camera_height,
+                camera_width=self.camera_width,
+            )
+            return np.linalg.inv(np.array(world_to_camera, dtype=float))
+
+        rotation, translation = self.get_camera_extrinsics()
+        world_to_camera = np.eye(4, dtype=float)
+        world_to_camera[:3, :3] = np.asarray(rotation, dtype=float)
+        world_to_camera[:3, 3] = np.asarray(translation, dtype=float)
+        return np.linalg.inv(world_to_camera)
 
     def get_object_dynamics_summary(self):
         return {"task_name": self.task_name, "observation_type": type(self.obs).__name__}
@@ -443,6 +707,7 @@ class RobocasaEnvWrapper(BaseEnvWrapper):
         if seed is not None:
             self.set_seed(seed)
         self.obs, self._last_info = self._reset_env(seed=seed)
+        self._refresh_live_camera_cache()
         self.done = False
         self._episode_terminated = False
         return self.get_observation()

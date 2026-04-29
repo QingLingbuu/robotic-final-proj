@@ -57,6 +57,35 @@ def _ensure_keys(section_name, payload, required_keys):
         raise RLConfigError(f"{section_name} missing required keys: {', '.join(missing)}")
 
 
+def build_selector_contract(config):
+    """Build a normalized RL selector contract from optional config."""
+    selector = deepcopy(config.get("selector") or {})
+    enabled = bool(selector.get("enabled", False))
+    max_candidates = int(selector.get("max_candidates", 0 if not enabled else 1))
+    if enabled and max_candidates <= 0:
+        raise RLConfigError("selector.max_candidates must be positive when selector is enabled.")
+
+    fallback_actions = [
+        str(action).strip().lower()
+        for action in selector.get("fallback_actions", [])
+        if str(action).strip()
+    ]
+    valid_fallbacks = {"clear", "resense"}
+    invalid = [action for action in fallback_actions if action not in valid_fallbacks]
+    if invalid:
+        raise RLConfigError(
+            "selector.fallback_actions contains unsupported actions: " + ", ".join(invalid)
+        )
+
+    action_meanings = ["select_candidate"] + fallback_actions if enabled else []
+    return {
+        "enabled": enabled,
+        "max_candidates": max_candidates,
+        "fallback_actions": fallback_actions,
+        "action_meanings": action_meanings,
+    }
+
+
 def validate_rl_config(config):
     """Validate the milestone-1 dual-arm RoboCasa RL config contract."""
     _ensure_keys("config", config, REQUIRED_TOP_LEVEL_KEYS)
@@ -94,11 +123,13 @@ def validate_rl_config(config):
     normalized["train"]["smoke_steps"] = int(normalized["train"]["smoke_steps"])
     normalized["train"]["checkpoint_every"] = int(normalized["train"]["checkpoint_every"])
     normalized["eval"]["episodes"] = int(normalized["eval"]["episodes"])
+    normalized["selector"] = build_selector_contract(normalized)
     return normalized
 
 
 def summarize_rl_config(config):
     """Return a compact, test-friendly summary of the RL config."""
+    selector = build_selector_contract(config)
     return {
         "task_name": config["task_name"],
         "backend": config["backend"],
@@ -110,4 +141,7 @@ def summarize_rl_config(config):
         "max_steps": int(config["termination"]["max_steps"]),
         "seed_set": list(config["eval"]["seed_set"]),
         "render_enabled": bool(config["render"]["enabled"]),
+        "selector_enabled": selector["enabled"],
+        "selector_max_candidates": selector["max_candidates"],
+        "selector_actions": list(selector["action_meanings"]),
     }

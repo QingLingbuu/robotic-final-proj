@@ -67,6 +67,30 @@ def load_config(config_path):
         return yaml.safe_load(file_handle)
 
 
+def resolve_runtime_camera_config(env, camera_config):
+    """Overlay runtime camera intrinsics / extrinsics onto static config values."""
+    resolved = dict(camera_config or {})
+    fx, fy, cx, cy = env.get_camera_intrinsics()
+    rotation, translation = env.get_camera_extrinsics()
+    camera_to_world_transform = env.get_camera_to_world_transform()
+    resolved.update(
+        {
+            "fx": float(fx),
+            "fy": float(fy),
+            "cx": float(cx),
+            "cy": float(cy),
+            "camera_to_world_transform": np.asarray(
+                camera_to_world_transform, dtype=float
+            ).tolist(),
+            "T_world_cam": {
+                "rotation": np.asarray(rotation, dtype=float).tolist(),
+                "translation": np.asarray(translation, dtype=float).tolist(),
+            },
+        }
+    )
+    return resolved
+
+
 def vision_payload_ready(detected_objects):
     """Return whether the payload contains a planning-usable target."""
     return bool(detected_objects) and detected_objects.get("status") == "ready"
@@ -187,6 +211,9 @@ def build_single_grasp_pos(env, grasp_target_pos, source, vision_config=None):
             raise ValueError("single_vision_grasp_offset must contain exactly 3 values.")
         return grasp_target_pos + offset
 
+    if source == "candidate":
+        return np.array(grasp_target_pos, dtype=float)
+
     z_offset = float(vision_config.get("single_grasp_z_offset", SINGLE_GRASP_Z_OFFSET))
     return grasp_target_pos + np.array([0.0, 0.0, z_offset])
 
@@ -201,6 +228,7 @@ def build_execution_summary():
         "vision_target_pos": None,
         "corrected_vision_target_pos": None,
         "grasp_targets": None,
+        "selected_candidate": None,
         "dual_arm_alignment_errors": None,
         "dual_arm_execution_diagnostics": None,
         "grasp_failure_mode": None,
@@ -498,7 +526,12 @@ def run_grasp_phase(
             )
     else:
         single_source = "observation"
-        if not VISION_OFF and corrected_vision_target_pos is not None:
+        selected_candidate = fsm.get_selected_candidate()
+        if not VISION_OFF and selected_candidate is not None:
+            grasp_target_pos = np.array(selected_candidate["pos"], dtype=float)
+            single_source = "candidate"
+            execution_summary["selected_candidate"] = selected_candidate
+        elif not VISION_OFF and corrected_vision_target_pos is not None:
             grasp_target_pos = corrected_vision_target_pos
             single_source = "vision"
         execution_summary["grasp_source"] = single_source
@@ -551,6 +584,7 @@ def main():
 
     print("\nInitializing robosuite environment...")
     env = RobosuiteEnvWrapper(camera_config=camera_config)
+    camera_config = resolve_runtime_camera_config(env, camera_config)
     print(f"  Action dim: {env.action_dim}")
     print(f"  Object dynamics: {env.get_object_dynamics_summary()}")
 

@@ -103,6 +103,9 @@ def create_env(
     else:
         raise ValueError('split must be either {None, "all", "pretrain", "target"}')
 
+    use_camera_obs = kwargs.pop("use_camera_obs", (not render_onscreen))
+    camera_depths = kwargs.pop("camera_depths", False)
+
     env_kwargs = dict(
         env_name=env_name,
         robots=robots,
@@ -114,8 +117,8 @@ def create_env(
         has_offscreen_renderer=(not render_onscreen),
         ignore_done=True,
         use_object_obs=True,
-        use_camera_obs=(not render_onscreen),
-        camera_depths=False,
+        use_camera_obs=use_camera_obs,
+        camera_depths=camera_depths,
         seed=seed,
         obj_instance_split=obj_instance_split,
         generative_textures=generative_textures,

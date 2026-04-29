@@ -81,7 +81,24 @@ Dependency smoke check:
 python scripts/setup/check_robocasa_rl_deps.py
 ```
 
-## 5. Common Commands
+## 5. robosuite Baseline Environment Setup
+
+The robosuite baseline uses the separate `robotic-final` environment defined in [environment.yml](/D:/Code/MyRepositories/robotic-final-proj/environment.yml:1).
+
+From the repository root:
+
+```powershell
+conda env create -f environment.yml
+conda activate robotic-final
+```
+
+This baseline environment is the one to use for:
+
+- `main.py`
+- `scripts/demo_vision_grasp.py`
+- the robosuite-side perception / FSM / grasp pipeline
+
+## 6. Common Commands
 
 Print the current RoboCasa setup guidance:
 
@@ -113,7 +130,49 @@ Run evaluation and save a rollout video:
 python scripts/eval_rl.py --config configs/rl/single_arm_robocasa_ppo.yaml --latest --save-video
 ```
 
-## 6. Output Paths
+Run the currently validated RoboCasa onscreen automatic reach demo:
+
+```powershell
+python scripts/demo_robocasa_reach_onscreen.py --task robocasa/CoffeeSetupMug --target-label mug
+```
+
+If you want the viewer to stay open longer after the reach:
+
+```powershell
+python scripts/demo_robocasa_reach_onscreen.py --task robocasa/CoffeeSetupMug --target-label mug --keep-open-sec 20
+```
+
+If axis calibration is causing issues and you want a quicker smoke:
+
+```powershell
+python scripts/demo_robocasa_reach_onscreen.py --task robocasa/CoffeeSetupMug --target-label mug --skip-axis-calibration
+```
+
+Current practical way to capture a real RoboCasa motion video:
+
+- run `scripts/demo_robocasa_reach_onscreen.py`
+- record the onscreen viewer with Windows Game Bar (`Win + G`) or OBS
+- prefer this path over the older offscreen mp4 experiments, which were observed to freeze or go black after `env.step()`
+
+Common robosuite baseline commands:
+
+```powershell
+python scripts/demo_vision_grasp.py --scenario cube --render
+python scripts/demo_vision_grasp.py --scenario can --render
+python scripts/demo_vision_grasp.py --scenario milk --render
+python scripts/demo_vision_grasp.py --scenario bread --render
+python scripts/demo_vision_grasp.py --scenario cereal --render
+```
+
+Use `scripts/demo_vision_grasp.py` when you want the explicit robosuite demo entrypoint with staged console output.
+
+Run the main robosuite project flow:
+
+```powershell
+python main.py
+```
+
+## 7. Output Paths
 
 Project artifacts must go under:
 
@@ -127,7 +186,7 @@ outputs/
 
 Do not treat `.sisyphus/` or `scripts/.sisyphus/` as project output locations.
 
-## 7. What To Commit
+## 8. What To Commit
 
 Safe to commit:
 
@@ -146,7 +205,7 @@ Do not commit:
 - runtime `outputs/`
 - tool-private `.sisyphus/`
 
-## 8. Current Caveats
+## 9. Current Caveats
 
 - `third_party/robocasa` includes large simulator assets, so the repository will be much bigger than before
 - `gymnasium` observation-space warnings on the RoboCasa path are still unresolved
