@@ -9,7 +9,7 @@ scipy==1.15.3
 mujoco==3.3.1
 pygame
 Pillow==10.2.0
-opencv-python==4.8.0.76
+opencv-python==4.11.0.86
 pyyaml==6.0.1
 pynput
 tqdm==4.66.2

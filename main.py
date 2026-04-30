@@ -35,7 +35,7 @@ from vision.perception_loop import VisionPerceptionLoop, VisionPerceptionWorker
 
 KEEP_RENDER_OPEN = False  # Set to True to keep render window open after test
 GRASP_MODE = "single"  # "dual"双臂夹取 or "single"单臂夹取
-VISION_OFF = True  # True means grasp and obstacle clearing use robosuite observations only
+VISION_OFF = False  # True means grasp and obstacle clearing use robosuite observations only
 ENABLE_PLACE_TEST = True
 SINGLE_GRASP_Z_OFFSET = -0.04
 PLACE_TARGET_OFFSET = [0, 0, 0.0]
@@ -211,7 +211,7 @@ def build_single_grasp_pos(env, grasp_target_pos, source, vision_config=None):
             raise ValueError("single_vision_grasp_offset must contain exactly 3 values.")
         return grasp_target_pos + offset
 
-    if source == "candidate":
+    if source in {"candidate", "gt", "ground_truth"}:
         return np.array(grasp_target_pos, dtype=float)
 
     z_offset = float(vision_config.get("single_grasp_z_offset", SINGLE_GRASP_Z_OFFSET))

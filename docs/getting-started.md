@@ -155,7 +155,7 @@ Current practical way to capture a real RoboCasa motion video:
 Common robosuite baseline commands:
 
 ```powershell
-python scripts/demo_vision_grasp.py --scenario cube --render
+python scripts/demo_vision_grasp.py --scenario cube--render
 python scripts/demo_vision_grasp.py --scenario can --render
 python scripts/demo_vision_grasp.py --scenario milk --render
 python scripts/demo_vision_grasp.py --scenario bread --render

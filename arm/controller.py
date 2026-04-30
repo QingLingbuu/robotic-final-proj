@@ -4,6 +4,7 @@ import numpy as np
 
 
 GRASP_HEIGHT_OFFSET = 0.05
+SINGLE_GRASP_CONTACT_Z_OFFSET = 0.025
 DUAL_PRE_GRASP_HEIGHT_OFFSET = 0.09
 DUAL_TRANSIT_HEIGHT_OFFSET = 0.16
 DUAL_ALIGN_HEIGHT_OFFSET = 0.045
@@ -14,6 +15,7 @@ PRE_GRASP_SINGLE_ARM_STEP = 0.25
 NEAR_MOVE_STEP = 0.35
 MOVE_GAIN = 8.0
 WAYPOINT_TOLERANCE = 0.025
+GRASP_SUCCESS_TOLERANCE = 0.008
 DUAL_TRANSFER_TOLERANCE = 0.035
 NEAR_WAYPOINT_DISTANCE = 0.06
 ACTION_SMOOTHING_ALPHA = 0.82
@@ -71,20 +73,21 @@ HOME_JOINT_TOLERANCE = 0.05
 
 
 def compute_grasp_waypoints(target_pos):
+    grasp_z = float(target_pos[2]) - SINGLE_GRASP_CONTACT_Z_OFFSET
     pre_grasp = [
         target_pos[0],
         target_pos[1],
-        target_pos[2] + GRASP_HEIGHT_OFFSET,
+        grasp_z + GRASP_HEIGHT_OFFSET,
     ]
     grasp = [
         target_pos[0],
         target_pos[1],
-        target_pos[2],
+        grasp_z,
     ]
     lift = [
         target_pos[0],
         target_pos[1],
-        target_pos[2] + SINGLE_LIFT_HEIGHT,
+        grasp_z + SINGLE_LIFT_HEIGHT,
     ]
     return pre_grasp, grasp, lift
 
@@ -1320,6 +1323,7 @@ def execute_grasp(env, target_pos, arm_idx=0):
         GRIPPER_OPEN,
         stage_name="approach",
         max_steps_per_segment=120,
+        success_tolerance=GRASP_SUCCESS_TOLERANCE,
     ):
         return False
 
@@ -1356,6 +1360,7 @@ def execute_single_grasp_transfer(env, target_pos, place_pos, arm_idx=0):
             GRIPPER_OPEN,
             stage_name="approach",
             max_steps_per_segment=120,
+            success_tolerance=GRASP_SUCCESS_TOLERANCE,
         ):
             return False
 

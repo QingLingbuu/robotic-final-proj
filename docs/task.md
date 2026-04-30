@@ -58,6 +58,16 @@
 - 修复 `scripts/demo_robocasa_vision.py` 的 `_resolve_initial_rgbd()` 自递归错误；该 helper 现在会先读取 wrapper 的 `env.get_observation()`，再按 raw observation key 做 RGB / depth 回退，不再在初始 RGB-D 路径上无限递归
 - 新增 `scripts/demo_robocasa_reach_onscreen.py`，提供底层 RoboCasa/robosuite 的 onscreen 自动 reach 入口：脚本会同时打开实时 viewer 与 offscreen 相机观测，用运行时 RGB-D 做 candidate 生成，并在窗口里执行可选轴标定和 `hover -> settle` reach，便于直接录屏或人工观察真实机械臂运动
 - `requirements.txt` 现合并为统一安装入口，覆盖当前 robosuite、RoboCasa vision 与 RL smoke 路径；该入口采用 RoboCasa/RL 的 `numpy 2.2.5` / `torch 2.7.1` / `torchvision 0.22.1` 基线，并显式安装 `third_party/robosuite` 与 `third_party/robocasa`，不再兼容 `mink 0.0.5` 的 `numpy<2.0.0` 约束
+- 统一依赖入口里的 OpenCV 版本已从 `opencv-python==4.8.0.76` 升到 `4.11.0.86`，用于修复 Windows + Python 3.10 下 `numpy 2.2.5` 环境里的 ABI 兼容问题；此前按新 `requirements.txt` 重建 `robotic-robocasa-rl` 环境时，`cv2` 导入会触发 `_ARRAY_API not found` / `numpy.core.multiarray failed to import`，本轮已按支持 NumPy 2 的 OpenCV 版本线修正
+- 新增 `scripts/checkVision.py` 诊断入口，复用 `demo_vision_grasp.py` 的 robosuite 视觉抓取链路，并并排输出 `vision target / selected candidate / final_grasp_pos / GT object center & top surface / planned waypoints / executed EEF pose`，用于区分“抓取点 z 本身偏高”和“执行阶段没有真正下探到 planned grasp z”这两类问题
+- `scripts/checkVision.py` 现支持 `--scenario cube|can|milk|bread|cereal|all`，可像 `demo_vision_grasp.py` 一样按单场景检查，也可一键汇总全部 robosuite 基线场景的 vision / GT / execution 对比结果
+- `scripts/checkVision.py` 现支持 `--summary`（JSON 摘要）与 `--summary-table`（文本表格摘要），便于快速横向比较各场景的 `candidate_z_minus_gt_top_surface`、`eef_before_close_z_minus_planned_grasp_z`、`grasp_verified` 等关键诊断字段
+- `scripts/checkVision.py` 的表格摘要现额外展示每个场景的 `gt_xyz`（GT 目标中心坐标）与 `vision_xyz`（视觉 target 坐标），便于直接对照各场景的三维坐标偏差而不必回看完整 JSON
+- 新增 `scripts/demo_GT_grasp.py`，保持与 `scripts/demo_vision_grasp.py` 相同的 `--scenario cube|can|milk|bread|cereal` / `--render` / `--place-test` 入口形式，但将抓取目标来源替换为 robosuite GT 坐标，用于和 vision-driven demo 做一对一执行对照
+- 新增 `scripts/grasp_demo_common.py` 共享 GT object summary / GT grasp target helper，供 `checkVision.py` 与 `demo_GT_grasp.py` 共同复用，避免 demo 脚本反向依赖诊断脚本的私有 helper
+- 单臂抓取阶段现使用比通用 waypoint 更严格的 `GRASP_SUCCESS_TOLERANCE`，用于避免 close 前在 `planned_grasp` 上方约 2.5cm 提前判定“到位”；同时 `demo_vision_grasp.py` / `demo_GT_grasp.py` 现会先 `render()` 再执行 `home_arms()`，以减少 cube/Lift 双臂收尾阶段对 render 路径的干扰
+- 单臂 `compute_grasp_waypoints()` 现显式引入 `SINGLE_GRASP_CONTACT_Z_OFFSET = 0.025`，把 `robot0_eef_pos` 这类 EEF/TCP 参考点与真实夹爪接触面分开；这是针对 `checkVision.py` 中 close 前高度稳定高于 `planned_grasp.z` 约 2.5cm 的执行侧补偿修正
+- `scripts/demo_vision_grasp.py` 的 `cube` 场景现改回与脚本实际执行方式一致的单臂 `Lift` 配置（`robots="Panda"`, `env_configuration="default"`），避免继续在“双臂环境里的单臂抓取”上做无效诊断并干扰 `render` / `home_arms()` 行为判断
 - 旧的 `requirements-robocasa-rl.txt` 已删除，`environment-robocasa-rl.yml`、setup 指引和依赖测试都改为引用统一的 `requirements.txt`
 - `scripts/setup/check_robocasa_rl_deps.py` 现改为读取包元数据版本，不再通过真实 import `robosuite` / `robocasa` 做依赖 smoke，避免检查阶段被仿真初始化卡住
 - 清理了本轮试错中确认无效的离屏录像脚本与产物：`scripts/record_robocasa_motion.py`、`scripts/record_robocasa_reach.py` 以及 `outputs/vision/` 下对应 mp4 / reach 调试文件已删除，避免继续误用一条已知会在 `env.step()` 后冻结或黑屏的录像路径
