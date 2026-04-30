@@ -68,8 +68,8 @@ def build_demo_env_and_labels(scenario):
         return (
             {
                 "env_name": "Lift",
-                "robots": "Panda",
-                "env_configuration": "default",
+                "robots": ["Panda", "Panda"],
+                "env_configuration": "parallel",
             },
             ["cube"],
             [],
@@ -279,11 +279,11 @@ def run_demo(
         )
     )
 
-    if render:
-        env.render()
-
     home_success = home_arms(env)
     print(json.dumps({"home_arms_success": bool(home_success)}, indent=2))
+
+    if render:
+        env.render()
 
 
 def main():
