@@ -60,7 +60,7 @@ For the `RoboCasa` RL path, the repository should prefer:
 
 - a lightweight `conda` environment shell
 - `python=3.10`
-- `pip` installation from `requirements-robocasa-rl.txt`
+- `pip` installation from `requirements.txt`
 
 Reason:
 

@@ -1,41 +1,41 @@
 """Minimal dependency smoke checks for the RoboCasa + RL migration baseline."""
 
-import importlib
 import json
+from importlib import metadata
 
 
 DEPENDENCIES = {
-    "numpy": {"required": True},
-    "torch": {"required": True},
-    "torchvision": {"required": True},
-    "gymnasium": {"required": True},
-    "robosuite": {"required": True},
-    "stable_baselines3": {"required": True},
-    "mujoco": {"required": True},
-    "mink": {"required": False},
-    "robocasa": {"required": False},
+    "numpy": {"required": True, "distribution": "numpy"},
+    "torch": {"required": True, "distribution": "torch"},
+    "torchvision": {"required": True, "distribution": "torchvision"},
+    "gymnasium": {"required": True, "distribution": "gymnasium"},
+    "robosuite": {"required": True, "distribution": "robosuite"},
+    "stable_baselines3": {"required": True, "distribution": "stable-baselines3"},
+    "mujoco": {"required": True, "distribution": "mujoco"},
+    "mink": {"required": False, "distribution": "mink"},
+    "robocasa": {"required": False, "distribution": "robocasa"},
 }
 
 
-def inspect_dependency(module_name):
+def inspect_dependency(module_name, distribution_name):
     try:
-        module = importlib.import_module(module_name)
-    except Exception as exc:  # pragma: no cover - informational script
+        version = metadata.version(distribution_name)
+    except metadata.PackageNotFoundError:
         return {
             "installed": False,
-            "error": f"{exc.__class__.__name__}: {exc}",
+            "error": f"PackageNotFoundError: {distribution_name}",
         }
 
     return {
         "installed": True,
-        "version": getattr(module, "__version__", "unknown"),
+        "version": version,
     }
 
 
 def main():
     results = {
-        name: inspect_dependency(name)
-        for name in DEPENDENCIES
+        name: inspect_dependency(name, meta["distribution"])
+        for name, meta in DEPENDENCIES.items()
     }
     missing_required = [
         name

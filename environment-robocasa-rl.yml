@@ -6,18 +6,11 @@ dependencies:
   - python=3.10
   - pip
   - pip:
-      - -r requirements-robocasa-rl.txt
+      - -r requirements.txt
 
-# RoboCasa/RL lives in its own env; do not treat this as the robosuite/mink baseline.
-# Use conda only as a lightweight Python + pip shell. Let pip resolve the RoboCasa stack.
+# RoboCasa/RL lives in its own env; do not treat this as the legacy mink baseline.
+# Use conda only as a lightweight Python + pip shell. Let pip resolve the unified stack.
 # The fully pinned conda solve was not portable on win-64 once torch / numba / scipy were locked together.
 # Real RoboCasa install drifted to numpy 2.2.5 / torch 2.7.1 / torchvision 0.22.1 / gymnasium 0.29.1.
 # mink 0.0.5 requires numpy<2.0.0, so a single unified env is not supported by the observed install.
-# RoboCasa and robosuite should be placed under third_party/ after env creation:
-#   mkdir third_party
-#   cd third_party
-#   git clone https://github.com/ARISE-Initiative/robosuite
-#   git clone https://github.com/robocasa/robocasa
-#   cd ..
-#   pip install -e ./third_party/robosuite
-#   pip install -e ./third_party/robocasa
+# RoboCasa and robosuite are installed from the vendored third_party/ trees by requirements.txt.

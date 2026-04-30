@@ -9,24 +9,27 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 class DependencyBaselineTests(unittest.TestCase):
-    def test_robocasa_rl_requirements_file_exists(self):
-        requirements_path = PROJECT_ROOT / "requirements-robocasa-rl.txt"
+    def test_unified_requirements_file_exists(self):
+        requirements_path = PROJECT_ROOT / "requirements.txt"
         self.assertTrue(requirements_path.exists())
         content = requirements_path.read_text(encoding="utf-8")
-        self.assertIn("separate environment from the robosuite/mink baseline", content)
+        self.assertIn("Unified dependency set for Python 3.10", content)
         self.assertIn("numpy==2.2.5", content)
         self.assertIn("torch==2.7.1", content)
         self.assertIn("torchvision==0.22.1", content)
         self.assertIn("gymnasium==0.29.1", content)
         self.assertIn("stable-baselines3", content)
         self.assertIn("mujoco==3.3.1", content)
+        self.assertIn("huggingface-hub", content)
+        self.assertIn("-e ./third_party/robosuite", content)
+        self.assertIn("-e ./third_party/robocasa", content)
 
     def test_robocasa_rl_environment_file_exists(self):
         env_path = PROJECT_ROOT / "environment-robocasa-rl.yml"
         self.assertTrue(env_path.exists())
         content = env_path.read_text(encoding="utf-8")
         self.assertIn("python=3.10", content)
-        self.assertIn("- -r requirements-robocasa-rl.txt", content)
+        self.assertIn("- -r requirements.txt", content)
         self.assertIn("RoboCasa/RL lives in its own env", content)
         self.assertIn("Use conda only as a lightweight Python + pip shell", content)
 
@@ -39,7 +42,7 @@ class DependencyBaselineTests(unittest.TestCase):
             check=True,
         )
         self.assertIn("RoboCasa + RL baseline setup", result.stdout)
-        self.assertIn("pip install -r requirements-robocasa-rl.txt", result.stdout)
+        self.assertIn("pip install -r requirements.txt", result.stdout)
         self.assertIn("scripts/setup/check_robocasa_rl_deps.py", result.stdout)
 
     def test_dependency_smoke_script_reports_json(self):

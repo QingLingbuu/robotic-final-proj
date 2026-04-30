@@ -58,6 +58,8 @@
 - 修复 `scripts/demo_robocasa_vision.py` 的 `_resolve_initial_rgbd()` 自递归错误；该 helper 现在会先读取 wrapper 的 `env.get_observation()`，再按 raw observation key 做 RGB / depth 回退，不再在初始 RGB-D 路径上无限递归
 - 新增 `scripts/demo_robocasa_reach_onscreen.py`，提供底层 RoboCasa/robosuite 的 onscreen 自动 reach 入口：脚本会同时打开实时 viewer 与 offscreen 相机观测，用运行时 RGB-D 做 candidate 生成，并在窗口里执行可选轴标定和 `hover -> settle` reach，便于直接录屏或人工观察真实机械臂运动
 - `requirements.txt` 现合并为统一安装入口，覆盖当前 robosuite、RoboCasa vision 与 RL smoke 路径；该入口采用 RoboCasa/RL 的 `numpy 2.2.5` / `torch 2.7.1` / `torchvision 0.22.1` 基线，并显式安装 `third_party/robosuite` 与 `third_party/robocasa`，不再兼容 `mink 0.0.5` 的 `numpy<2.0.0` 约束
+- 旧的 `requirements-robocasa-rl.txt` 已删除，`environment-robocasa-rl.yml`、setup 指引和依赖测试都改为引用统一的 `requirements.txt`
+- `scripts/setup/check_robocasa_rl_deps.py` 现改为读取包元数据版本，不再通过真实 import `robosuite` / `robocasa` 做依赖 smoke，避免检查阶段被仿真初始化卡住
 - 清理了本轮试错中确认无效的离屏录像脚本与产物：`scripts/record_robocasa_motion.py`、`scripts/record_robocasa_reach.py` 以及 `outputs/vision/` 下对应 mp4 / reach 调试文件已删除，避免继续误用一条已知会在 `env.step()` 后冻结或黑屏的录像路径
 - `third_party/robocasa/robocasa/utils/env_utils.py` 现允许外部覆盖 `use_camera_obs` / `camera_depths`，不再在 `create_env(...)` 内部写死 `camera_depths=False`，为 RoboCasa RGB-D 视觉链打通做准备
 

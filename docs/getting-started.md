@@ -60,9 +60,7 @@ From the repository root:
 ```powershell
 conda create -n robotic-robocasa-rl python=3.10 pip
 conda activate robotic-robocasa-rl
-pip install -r requirements-robocasa-rl.txt
-pip install -e ./third_party/robosuite
-pip install -e ./third_party/robocasa
+pip install -r requirements.txt
 ```
 
 If RoboCasa macro setup expects a root-level template inside its vendored tree:
