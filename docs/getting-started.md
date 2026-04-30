@@ -96,6 +96,8 @@ This baseline environment is the one to use for:
 - `scripts/demo_vision_grasp.py`
 - the robosuite-side perception / FSM / grasp pipeline
 
+For the current round's machine-local diagnosis memo and ad-hoc script shortcuts, see [`../LHYstart.md`](../LHYstart.md). Treat that file as a convenience note, but treat **this document** as the project-level source of truth for environment strategy.
+
 ## 6. Common Commands
 
 Print the current RoboCasa setup guidance:
@@ -155,7 +157,7 @@ Current practical way to capture a real RoboCasa motion video:
 Common robosuite baseline commands:
 
 ```powershell
-python scripts/demo_vision_grasp.py --scenario cube--render
+python scripts/demo_vision_grasp.py --scenario cube --render
 python scripts/demo_vision_grasp.py --scenario can --render
 python scripts/demo_vision_grasp.py --scenario milk --render
 python scripts/demo_vision_grasp.py --scenario bread --render
@@ -163,6 +165,14 @@ python scripts/demo_vision_grasp.py --scenario cereal --render
 ```
 
 Use `scripts/demo_vision_grasp.py` when you want the explicit robosuite demo entrypoint with staged console output.
+
+Additional diagnosis helpers used in the current round:
+
+```powershell
+python scripts/demo_GT_grasp.py --scenario cube
+python scripts/checkVision.py --scenario cube
+python scripts/checkVision.py --scenario all --summary-table
+```
 
 Run the main robosuite project flow:
 

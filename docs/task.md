@@ -68,6 +68,14 @@
 - 单臂抓取阶段现使用比通用 waypoint 更严格的 `GRASP_SUCCESS_TOLERANCE`，用于避免 close 前在 `planned_grasp` 上方约 2.5cm 提前判定“到位”；同时 `demo_vision_grasp.py` / `demo_GT_grasp.py` 现会先 `render()` 再执行 `home_arms()`，以减少 cube/Lift 双臂收尾阶段对 render 路径的干扰
 - 单臂 `compute_grasp_waypoints()` 现显式引入 `SINGLE_GRASP_CONTACT_Z_OFFSET = 0.025`，把 `robot0_eef_pos` 这类 EEF/TCP 参考点与真实夹爪接触面分开；这是针对 `checkVision.py` 中 close 前高度稳定高于 `planned_grasp.z` 约 2.5cm 的执行侧补偿修正
 - `scripts/demo_vision_grasp.py` 的 `cube` 场景现改回与脚本实际执行方式一致的单臂 `Lift` 配置（`robots="Panda"`, `env_configuration="default"`），避免继续在“双臂环境里的单臂抓取”上做无效诊断并干扰 `render` / `home_arms()` 行为判断
+- 当前 robosuite 诊断链新增三类实用入口：
+  - `scripts/checkVision.py`：并排输出 `vision target / GT center / planned grasp / execution` 的诊断入口，支持 `--scenario`、`--summary`、`--summary-table`
+  - `scripts/demo_GT_grasp.py`：与 `scripts/demo_vision_grasp.py` 保持近似 CLI 结构，但直接使用 GT 坐标执行抓取，用于和 vision demo 做一对一对照
+  - `scripts/grasp_demo_common.py`：抽出的共享 GT helper，统一 `cube / can / milk / bread / cereal` 的 GT object summary 与 GT grasp target 解析逻辑
+- 本轮针对单臂抓取执行侧已形成两个阶段性结论：
+  - `robot0_eef_pos` 更像 EEF/TCP 参考点，而不是真实指尖接触面；`SINGLE_GRASP_CONTACT_Z_OFFSET = 0.028` 更适合被理解为“参考点到接触面”的几何补偿，而不是所有对象通用的“抓取误差常数”
+  - `cube` 在修正为单臂 `Lift` 并加入接触补偿后，`checkVision.py --scenario cube` 与 `demo_GT_grasp.py --scenario cube` 已能成功抓起物体；当前 `demo_vision_grasp.py --scenario cube --render` 的主要剩余问题已转向 vision 大框误检 / candidate 几何失真，而不再是执行层下探不到位
+- 文档口径说明：`docs/getting-started.md` 仍然是项目级环境策略说明；`LHYstart.md` 只记录本轮在当前机器上实际使用过的诊断/演示命令，便于快速复现，不替代正式环境文档
 - 旧的 `requirements-robocasa-rl.txt` 已删除，`environment-robocasa-rl.yml`、setup 指引和依赖测试都改为引用统一的 `requirements.txt`
 - `scripts/setup/check_robocasa_rl_deps.py` 现改为读取包元数据版本，不再通过真实 import `robosuite` / `robocasa` 做依赖 smoke，避免检查阶段被仿真初始化卡住
 - 清理了本轮试错中确认无效的离屏录像脚本与产物：`scripts/record_robocasa_motion.py`、`scripts/record_robocasa_reach.py` 以及 `outputs/vision/` 下对应 mp4 / reach 调试文件已删除，避免继续误用一条已知会在 `env.step()` 后冻结或黑屏的录像路径

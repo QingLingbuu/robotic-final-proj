@@ -2,9 +2,10 @@
 
 ## Core Docs
 
-- [Getting Started](/D:/Code/MyRepositories/robotic-final-proj/docs/getting-started.md)
-- [Current Task Board](/D:/Code/MyRepositories/robotic-final-proj/docs/task.md)
-- [RoboCasa Migration Architecture](/D:/Code/MyRepositories/robotic-final-proj/docs/architecture/robocasa-migration.md)
+- [Getting Started](./getting-started.md)
+- [Current Task Board](./task.md)
+- [RoboCasa Migration Architecture](./architecture/robocasa-migration.md)
+- [LHYstart](../LHYstart.md)
 
 ## Archive
 
@@ -12,8 +13,9 @@
 
 ## Intent
 
-- `docs/getting-started.md`: new clone, environment setup, common commands
+- `docs/getting-started.md`: project-level environment setup, structure, and common commands
 - `docs/task.md`: current repository status, active blockers, recommended next step
+- `LHYstart.md`: machine-local quick-start memo for the diagnosis / demo scripts added in this round
 - `docs/architecture/`: stable architecture and migration decisions
 - `docs/archive/`: older stage notes and historical summaries that should not live in the active task board
 
