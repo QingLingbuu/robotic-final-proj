@@ -25,6 +25,7 @@ gymnasium==0.29.1
 stable-baselines3
 
 transformers==4.41.2
+huggingface-hub
 
 # Install RoboCasa after the separate RoboCasa/RL env is created.
 # The recommended path is editable install from third_party/:

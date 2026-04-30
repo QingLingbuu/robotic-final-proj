@@ -1,10 +1,31 @@
-# Stable dependency set for Python 3.10
-robosuite==1.5.2
-numpy==1.26.4
+# Unified dependency set for Python 3.10.
+# This covers the current robosuite, RoboCasa vision, and RL smoke paths.
+# It intentionally follows the RoboCasa/RL stack and is not compatible with
+# mink 0.0.5's numpy<2.0.0 constraint.
+
+numpy==2.2.5
+numba==0.61.2
+scipy==1.15.3
+mujoco==3.3.1
+pygame
+Pillow==10.2.0
 opencv-python==4.8.0.76
-torch==2.1.0
-torchvision==0.16.0
-transformers==4.41.2
 pyyaml==6.0.1
+pynput
 tqdm==4.66.2
-pillow==10.2.0
+termcolor
+imageio
+h5py
+lxml
+hidapi
+
+torch==2.7.1
+torchvision==0.22.1
+gymnasium==0.29.1
+stable-baselines3
+
+transformers==4.41.2
+huggingface-hub
+
+-e ./third_party/robosuite
+-e ./third_party/robocasa
