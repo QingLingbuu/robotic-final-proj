@@ -20,7 +20,7 @@ publish_period_sec: 0.2
 initial_publish_timeout_sec: 30.0
 dual_grasp_lateral_offset: 0.065
 dual_grasp_height_offset: -0.04
-single_grasp_z_offset: -0.04
+single_grasp_z_offset: 0.02
 single_vision_grasp_offset:
   - 0.09
   - -0.08

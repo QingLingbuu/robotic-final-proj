@@ -35,9 +35,10 @@ from vision.perception_loop import VisionPerceptionLoop, VisionPerceptionWorker
 
 KEEP_RENDER_OPEN = False  # Set to True to keep render window open after test
 GRASP_MODE = "single"  # "dual"双臂夹取 or "single"单臂夹取
-VISION_OFF = False  # True means grasp and obstacle clearing use robosuite observations only
-ENABLE_PLACE_TEST = True
-SINGLE_GRASP_Z_OFFSET = -0.04
+VISION_OFF = True  # True means grasp and obstacle clearing use robosuite observations only
+HEADLESS_LIGHTWEIGHT_RUN = True  # Set False to restore the original rendered/camera-backed run
+ENABLE_PLACE_TEST = False
+SINGLE_GRASP_Z_OFFSET = 0.02
 PLACE_TARGET_OFFSET = [0, 0, 0.0]
 PLACE_RETRY_ATTEMPTS = 2
 CLEARING_PLACE_OFFSET = [0, 0, 0.0]
@@ -583,15 +584,29 @@ def main():
     print(f"  Vision: {vision_config}")
 
     print("\nInitializing robosuite environment...")
-    env = RobosuiteEnvWrapper(camera_config=camera_config)
+    env_config = None
+    if HEADLESS_LIGHTWEIGHT_RUN:
+        env_config = {
+            "has_renderer": False,
+            "has_offscreen_renderer": False,
+            "use_camera_obs": False,
+            "use_object_obs": True,
+        }
+    env = RobosuiteEnvWrapper(config=env_config, camera_config=camera_config)
     camera_config = resolve_runtime_camera_config(env, camera_config)
     print(f"  Action dim: {env.action_dim}")
     print(f"  Object dynamics: {env.get_object_dynamics_summary()}")
 
     print("\nGetting initial observation...")
     rgb, depth, proprio = env.reset()
-    print(f"  RGB shape: {rgb.shape}")
-    print(f"  Depth shape: {depth.shape}")
+    if rgb is not None:
+        print(f"  RGB shape: {rgb.shape}")
+    else:
+        print("  RGB observation: disabled in lightweight run")
+    if depth is not None:
+        print(f"  Depth shape: {depth.shape}")
+    else:
+        print("  Depth observation: disabled in lightweight run")
     print(f"  Arm 1 EEF pos: {proprio['robot0_eef_pos']}")
     print(f"  Arm 2 EEF pos: {proprio['robot1_eef_pos']}")
 
@@ -731,8 +746,11 @@ def main():
         except Exception:
             print("\nRender window closed, exiting...")
     else:
-        env.render()
-        print("\nRender complete, closing...")
+        if HEADLESS_LIGHTWEIGHT_RUN:
+            print("\nSkipping final render in lightweight run mode.")
+        else:
+            env.render()
+            print("\nRender complete, closing...")
 
     run_success = bool(
         planning_completed

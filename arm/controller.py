@@ -44,7 +44,7 @@ GRIPPER_ACTUATION_STEPS = 50
 DEBUG_GRIPPER = True
 GRASP_WIDTH_THRESHOLD = 0.02
 OBJECT_MOVE_THRESHOLD = 0.02
-OBJECT_LIFT_THRESHOLD = 0.02
+OBJECT_LIFT_THRESHOLD = 0.005
 OBJECT_PLACE_TOLERANCE = 0.08
 OBJECT_PLACE_HEIGHT_TOLERANCE = 0.05
 OBJECT_UPRIGHT_Z_THRESHOLD = 0.8
@@ -52,7 +52,7 @@ GRIPPER_RELEASED_WIDTH_THRESHOLD = 0.06
 PUSH_DIRECTION_PROGRESS_THRESHOLD = 0.03
 PUSH_LATERAL_DRIFT_TOLERANCE = 0.04
 PUSH_HEIGHT_CHANGE_TOLERANCE = 0.05
-SINGLE_LIFT_HEIGHT = 0.20
+SINGLE_LIFT_HEIGHT = 0.05
 DUAL_LIFT_HEIGHT = 0.16
 DUAL_RELEASE_RETRACT_DISTANCE = 0.055
 DUAL_RELEASE_LIFT_CLEARANCE = 0.045
@@ -1325,9 +1325,11 @@ def execute_grasp(env, target_pos, arm_idx=0):
         max_steps_per_segment=120,
         success_tolerance=GRASP_SUCCESS_TOLERANCE,
     ):
+        print("  single grasp failed at stage: approach")
         return False
 
     if not actuate_gripper(env, arm_idx, GRIPPER_CLOSED):
+        print("  single grasp failed at stage: close_gripper")
         return False
 
     if not _follow_single_arm_trajectory(
@@ -1338,9 +1340,13 @@ def execute_grasp(env, target_pos, arm_idx=0):
         stage_name="lift",
         max_steps_per_segment=120,
     ):
+        print("  single grasp failed at stage: lift")
         return False
 
-    return verify_grasp(env, arm_idx, object_pos_before)
+    grasp_ok = verify_grasp(env, arm_idx, object_pos_before)
+    if not grasp_ok:
+        print("  single grasp failed at stage: verify")
+    return grasp_ok
 
 
 def execute_single_grasp_transfer(env, target_pos, place_pos, arm_idx=0):
