@@ -75,6 +75,7 @@
 - 本轮针对单臂抓取执行侧已形成两个阶段性结论：
   - `robot0_eef_pos` 更像 EEF/TCP 参考点，而不是真实指尖接触面；`SINGLE_GRASP_CONTACT_Z_OFFSET = 0.028` 更适合被理解为“参考点到接触面”的几何补偿，而不是所有对象通用的“抓取误差常数”
   - `cube` 在修正为单臂 `Lift` 并加入接触补偿后，`checkVision.py --scenario cube` 与 `demo_GT_grasp.py --scenario cube` 已能成功抓起物体；当前 `demo_vision_grasp.py --scenario cube --render` 的主要剩余问题已转向 vision 大框误检 / candidate 几何失真，而不再是执行层下探不到位
+- 本轮补充完成了项目主入口的轻量可回滚运行路径，并已用 `HEADLESS_LIGHTWEIGHT_RUN` + `VISION_OFF` + 抓取参数回调验证到端到端 `SUCCESS`；最终运行已落日志 `logs/20260501_165052.json`，可作为当前机器上的可复现实验基线
 - 文档口径说明：`docs/getting-started.md` 仍然是项目级环境策略说明；`LHYstart.md` 只记录本轮在当前机器上实际使用过的诊断/演示命令，便于快速复现，不替代正式环境文档
 - 旧的 `requirements-robocasa-rl.txt` 已删除，`environment-robocasa-rl.yml`、setup 指引和依赖测试都改为引用统一的 `requirements.txt`
 - `scripts/setup/check_robocasa_rl_deps.py` 现改为读取包元数据版本，不再通过真实 import `robosuite` / `robocasa` 做依赖 smoke，避免检查阶段被仿真初始化卡住
