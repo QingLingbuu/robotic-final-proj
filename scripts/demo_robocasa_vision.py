@@ -921,7 +921,7 @@ def main():
     vision_config["target_labels"] = [args.target_label]
     vision_config["obstacle_labels"] = []
     if "mug" in args.target_label.lower() or "cup" in args.target_label.lower():
-        vision_config["candidate_types"] = ["top_down", "handle_grasp", "handle_top_down"]
+        vision_config["candidate_types"] = ["top_down", "handle_top_down"]
         vision_config["handle_labels"] = ["cup", "mug", "glass cup"]
     if args.allow_download:
         vision_config["local_files_only"] = False

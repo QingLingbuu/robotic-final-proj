@@ -4,6 +4,11 @@ import numpy as np
 
 from arm.robocasa_primitives import (
     HANDLE_TOP_DOWN_EEF_Z_OFFSET,
+    HANDLE_TOP_DOWN_YAW_GAIN,
+    HANDLE_TOP_DOWN_YAW_MAX_ACTION,
+    TOP_DOWN_SETTLE_ACTION_SCALE,
+    TOP_DOWN_YAW_GAIN,
+    TOP_DOWN_YAW_MAX_ACTION,
     build_target_rotation_for_top_down,
     compute_top_down_yaw_action,
 )
@@ -83,7 +88,16 @@ class RobocasaExecutionHelperTests(unittest.TestCase):
 
     def test_handle_top_down_settle_offset_targets_contact_height(self):
         self.assertLess(HANDLE_TOP_DOWN_EEF_Z_OFFSET, 0.0)
-        self.assertAlmostEqual(HANDLE_TOP_DOWN_EEF_Z_OFFSET, -0.010)
+        self.assertAlmostEqual(HANDLE_TOP_DOWN_EEF_Z_OFFSET, -0.025)
+
+    def test_top_down_settle_action_scale_keeps_final_descent_conservative(self):
+        self.assertLessEqual(TOP_DOWN_SETTLE_ACTION_SCALE, 0.30)
+        self.assertGreater(TOP_DOWN_SETTLE_ACTION_SCALE, 0.0)
+
+    def test_handle_top_down_yaw_alignment_is_slightly_faster(self):
+        self.assertGreater(HANDLE_TOP_DOWN_YAW_GAIN, TOP_DOWN_YAW_GAIN)
+        self.assertGreater(HANDLE_TOP_DOWN_YAW_MAX_ACTION, TOP_DOWN_YAW_MAX_ACTION)
+        self.assertLessEqual(HANDLE_TOP_DOWN_YAW_MAX_ACTION, 0.12)
 
 
 if __name__ == "__main__":

@@ -26,11 +26,11 @@ class ReachRetryTests(unittest.TestCase):
             final_error_threshold=0.03,
         ))
 
-    def test_no_retry_for_handle_reach_only_experiment(self):
+    def test_no_retry_for_reach_only_summary(self):
         self.assertFalse(should_retry_with_preposition(
             {"reach_success": False, "reach_only": True},
             {"position_saturated": True, "final_error": 0.2},
-            {"grasp_type": "handle_oblique_grasp"},
+            {"grasp_type": "handle_top_down"},
         ))
 
 

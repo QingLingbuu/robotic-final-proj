@@ -26,6 +26,10 @@ TOP_DOWN_ORI_MAX_ACTION = 0.18
 TOP_DOWN_MAINTAIN_ORI_MAX_ACTION = 0.06
 TOP_DOWN_YAW_GAIN = 0.65
 TOP_DOWN_YAW_MAX_ACTION = 0.08
+HANDLE_TOP_DOWN_YAW_GAIN = 0.90
+HANDLE_TOP_DOWN_YAW_MAX_ACTION = 0.12
+TOP_DOWN_SETTLE_ACTION_SCALE = 0.25
+HANDLE_TOP_DOWN_SETTLE_ACTION_SCALE = 0.45
 
 
 def build_target_rotation_for_top_down(candidate, current_quat=None):
@@ -207,11 +211,21 @@ def execute_oriented_top_down_reach(
             orientation_delta = None
             ori_error_norm = None
             if align_orientation and target_rot is not None and phase_name != "pre_hover":
+                yaw_gain = (
+                    HANDLE_TOP_DOWN_YAW_GAIN
+                    if candidate.get("grasp_type") == "handle_top_down"
+                    else TOP_DOWN_YAW_GAIN
+                )
+                yaw_max_action = (
+                    HANDLE_TOP_DOWN_YAW_MAX_ACTION
+                    if candidate.get("grasp_type") == "handle_top_down"
+                    else TOP_DOWN_YAW_MAX_ACTION
+                )
                 orientation_delta, ori_error_norm = compute_top_down_yaw_action(
                     get_robot0_eef_quat(current_obs),
                     candidate,
-                    gain=TOP_DOWN_YAW_GAIN,
-                    max_action=TOP_DOWN_YAW_MAX_ACTION,
+                    gain=yaw_gain,
+                    max_action=yaw_max_action,
                 )
                 if ori_error_norm <= float(orientation_tolerance):
                     orientation_success = True
@@ -245,7 +259,12 @@ def execute_oriented_top_down_reach(
                     step_limit=step_limit,
                 )
                 if phase_name == "settle":
-                    position_delta = np.asarray(position_delta, dtype=float) * 0.45
+                    settle_scale = (
+                        HANDLE_TOP_DOWN_SETTLE_ACTION_SCALE
+                        if candidate.get("grasp_type") == "handle_top_down"
+                        else TOP_DOWN_SETTLE_ACTION_SCALE
+                    )
+                    position_delta = np.asarray(position_delta, dtype=float) * settle_scale
 
             current_obs, _, _, _ = env.step(
                 build_flat_reach_action(
@@ -442,5 +461,119 @@ def execute_lift(
         "object_lift_delta_z": object_lift_delta_z,
         "final_error_to_lift_target": float(np.linalg.norm(lift_target - eef_after_lift)),
         "steps_used": steps_used,
+        "history_tail": history[-10:],
+    }
+
+
+def execute_place(
+    env,
+    obs,
+    place_target,
+    action_mapping=None,
+    max_steps_per_waypoint=220,
+    position_gain=8.0,
+    step_limit=0.05,
+    place_tolerance=0.018,
+    release_steps=40,
+    retract_height=0.10,
+    render_sleep_sec=0.005,
+):
+    target = np.asarray(place_target, dtype=float)
+    start_pos = get_robot0_eef_pos(obs)
+    place_high = np.asarray([target[0], target[1], max(start_pos[2], target[2] + 0.12)], dtype=float)
+    place_low = np.asarray([target[0], target[1], target[2]], dtype=float)
+    retract_target = np.asarray([target[0], target[1], target[2] + float(retract_height)], dtype=float)
+    waypoints = [("place_high", place_high), ("place_low", place_low)]
+
+    current_obs = obs
+    history = []
+    reached = True
+
+    for phase_name, waypoint in waypoints:
+        phase_success = False
+        for step_idx in range(int(max_steps_per_waypoint)):
+            current_pos = get_robot0_eef_pos(current_obs)
+            error = waypoint - current_pos
+            error_norm = float(np.linalg.norm(error))
+            history.append(
+                {
+                    "phase": phase_name,
+                    "step": step_idx,
+                    "eef_pos": current_pos.tolist(),
+                    "target_pos": waypoint.tolist(),
+                    "error_norm": error_norm,
+                }
+            )
+            if error_norm <= float(place_tolerance):
+                phase_success = True
+                break
+            _, position_delta = compute_position_delta(
+                error,
+                action_mapping=action_mapping,
+                position_gain=position_gain,
+                step_limit=step_limit,
+            )
+            if phase_name == "place_low":
+                position_delta = np.asarray(position_delta, dtype=float) * 0.35
+            current_obs, _, _, _ = env.step(
+                build_flat_reach_action(env, position_delta, gripper_close=GRIPPER_CLOSED)
+            )
+            if step_idx % 5 == 0:
+                env.render()
+                if render_sleep_sec > 0.0:
+                    time.sleep(render_sleep_sec)
+        if not phase_success:
+            reached = False
+            break
+
+    release_action = build_flat_reach_action(env, [0.0, 0.0, 0.0], gripper_close=GRIPPER_OPEN)
+    for step_idx in range(int(release_steps)):
+        current_obs, _, _, _ = env.step(release_action)
+        if step_idx % 5 == 0:
+            env.render()
+            if render_sleep_sec > 0.0:
+                time.sleep(render_sleep_sec)
+
+    retract_success = False
+    for step_idx in range(int(max_steps_per_waypoint)):
+        current_pos = get_robot0_eef_pos(current_obs)
+        error = retract_target - current_pos
+        error_norm = float(np.linalg.norm(error))
+        history.append(
+            {
+                "phase": "retract",
+                "step": step_idx,
+                "eef_pos": current_pos.tolist(),
+                "target_pos": retract_target.tolist(),
+                "error_norm": error_norm,
+            }
+        )
+        if error_norm <= float(place_tolerance):
+            retract_success = True
+            break
+        _, position_delta = compute_position_delta(
+            error,
+            action_mapping=action_mapping,
+            position_gain=position_gain,
+            step_limit=step_limit,
+        )
+        current_obs, _, _, _ = env.step(
+            build_flat_reach_action(env, position_delta, gripper_close=GRIPPER_OPEN)
+        )
+        if step_idx % 5 == 0:
+            env.render()
+            if render_sleep_sec > 0.0:
+                time.sleep(render_sleep_sec)
+
+    final_pos = get_robot0_eef_pos(current_obs)
+    return current_obs, {
+        "place_success": bool(reached and retract_success),
+        "place_target": target.tolist(),
+        "place_high": place_high.tolist(),
+        "place_low": place_low.tolist(),
+        "retract_target": retract_target.tolist(),
+        "robot0_eef_final": final_pos.tolist(),
+        "final_error_to_retract": float(np.linalg.norm(retract_target - final_pos)),
+        "release_steps": int(release_steps),
         "history_tail": history[-10:],
     }

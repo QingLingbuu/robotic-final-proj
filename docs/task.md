@@ -133,3 +133,68 @@
 - goal: 手动验证 `handle_top_down` 的夹爪闭合方向已从切向改为 outward/radial，且下调后的接触高度能稳定夹住把手。
 - success criteria: `target_closing_dot_outward` 接近 1 或 -1，而不是接近 0；`final_closing_dot_target_closing` 绝对值接近 1；`object_gripper_contact=true` 且 lift 阶段物体 z 有上升。
 - suggested verification: 运行 `python scripts/demo_robocasa_reach_onscreen.py --task robocasa/HeatMug --target-label mug --grasp-type handle_top_down --layout 3 --keep-open-sec 1`，观察夹爪是否跨把手厚度闭合，而不是沿把手方向闭合。
+## 2026-05-02 Cup/Mug Sorting Environment Update
+
+- Completed: added RoboCasa composite task `CupMugSorting` with multiple mugs and cups placed on one counter. Initial placement intentionally interleaves handled mugs and plain cups, so the sort check is not already satisfied at reset.
+- Completed: added `CupMugSortingClean`, a two-object clean validation scene with one mug and one plain cup in a front-facing open row. Use this before returning to the denser multi-object scene.
+- Completed: plain no-handle cups are now constrained to top-down-feasible geometry (`object_scale=[0.75, 0.75, 1.0]`, max XY size 7.2cm). This is required because Panda top-down cannot lift a cup whose rim is as wide as the maximum gripper opening.
+- Completed: added `configs/tasks/cup_mug_sorting.yaml` to track the environment target labels, object counts, sorting zones, and expected grasp strategies.
+- Completed: added `VisionPerceptionLoop.infer_all_targets_with_diagnostics()` for smoke-test multi-object perception without changing the existing single-target `detected_objects` queue schema.
+- Completed: added `vision/sorting_policy.py` and `scripts/demo_multi_cup_mug_sort.py` to classify visible drinkware. Objects with a `handle_top_down` candidate are assigned to the right arm / handle path; plain top-down-only objects are assigned to the left arm / top-down path.
+- Verification: syntax check passed for the new environment, script, config, perception, policy, and test files. The focused unittest command timed out in this local environment after importing robosuite warnings, so full simulation smoke verification still needs to be run manually.
+- Recommended next step: owner group `integration/merge`; goal: run `python scripts/demo_multi_cup_mug_sort.py --task robocasa/CupMugSorting --layout 3 --keep-open-sec 1`; success criteria: env initializes, `cup_mug_sorting_summary.target_count` is greater than 1 when detector cache is available, and assignments split handled mugs to `handle_top_down` and plain cups to `top_down`.
+
+## 2026-05-02 Top-Down Cup Grasp Tuning
+
+- Completed: cup-like top-down candidates now report a wide gripper target (`cup_like_top_down_width_min: 0.075`, capped by `top_down_width_max: 0.08`) so cup/mug top-down attempts are treated as near-max opening instead of inheriting a too-small point-cloud short-axis estimate.
+- Completed: cup-like top-down candidates now target below the rim (`cup_like_top_down_penetration_offset: 0.035`) so the close phase grasps cup wall / cup body instead of closing at the rim where max gripper width equals cup opening width.
+- Completed: regular top-down final settle descent is more conservative (`TOP_DOWN_SETTLE_ACTION_SCALE = 0.25`); `handle_top_down` keeps its existing settle scale to avoid perturbing the handle path.
+- Verification: syntax/config checks passed. Focused Python test commands still time out during robosuite initialization in this local shell, so manual run evidence is required.
+- Suggested verification: run `python scripts/demo_robocasa_reach_onscreen.py --task robocasa/CupMugSorting --target-label cup --grasp-type top_down --layout 3 --keep-open-sec 5` and inspect `perception_candidates[*].gripper_width`, `reach.history_tail`, `close.gripper_width_before`, and `lift.object_gripper_contact`.
+
+## 2026-05-02 Cup/Mug Classified Target Selection
+
+- Completed: `scripts/demo_robocasa_reach_onscreen.py` now enables drinkware classification for `CupMugSorting` when the requested target is `cup`, `glass cup`, or `mug`. It detects all drinkware labels first, classifies by handle availability, then rebuilds the single-target payload from the selected classified object.
+- Completed: `vision/sorting_policy.py` now exposes `select_drinkware_target()`. `cup` requests prefer no-handle targets even if a handled mug has higher detector confidence; `mug` requests prefer handle targets.
+- Completed: low-score `handle_top_down` candidates are no longer enough to mark an object as handled. The current policy requires either `handle_top_down` score >= 0.30 or strong geometry evidence (`handle_point_count >= 24` and `protrusion_quality >= 0.45`). This prevents weak false positives while still catching borderline-score handled objects.
+- Completed: for the synthetic `CupMugSorting` environment, visual targets are now matched to the nearest sim object metadata (`cup_*` / `mug_*`) before classification. This keeps DINO label noise and false visual handle candidates from overriding known scene truth.
+- Completed: when the requested `CupMugSorting` class is present in sim metadata but not visible to DINO, the demo now builds a sim-metadata fallback target instead of aborting. This is mainly for `cup` runs where the camera only sees mugs but the environment contains `cup_*` objects.
+- Verification: `python -m unittest discover -s tests -p "test_sorting_policy.py"` passed; syntax check passed for `vision/sorting_policy.py` and `scripts/demo_robocasa_reach_onscreen.py`.
+- Suggested verification: rerun `python scripts/demo_robocasa_reach_onscreen.py --task robocasa/CupMugSorting --target-label cup --grasp-type top_down --layout 3 --keep-open-sec 5` and inspect `drinkware_classification.selected_assignment.has_handle=false`.
+
+## 2026-05-02 Cup/Mug Post-Lift Placement
+
+- Completed: added `planner/sorting_zones.py` to choose world-space placement targets for `CupMugSorting`: handled mugs go left of the current object set, plain cups go right.
+- Completed: added `execute_place()` to `arm/robocasa_primitives.py`. After lift it transfers above the target zone, descends to release height, opens the gripper, and retracts.
+- Completed: `scripts/demo_robocasa_reach_onscreen.py` now runs place after lift for classified `CupMugSorting` targets and includes `place_plan` / `place` in `execution_summary`.
+- Verification: `python -m unittest discover -s tests -p "test_sorting_zones.py"` passed; syntax check passed for `arm/robocasa_primitives.py`, `scripts/demo_robocasa_reach_onscreen.py`, and `planner/sorting_zones.py`.
+- Suggested verification: run one plain cup path and one handled mug path. For cup: `python scripts/demo_robocasa_reach_onscreen.py --task robocasa/CupMugSorting --target-label cup --grasp-type top_down --layout 1 --keep-open-sec 5`. For mug: `python scripts/demo_robocasa_reach_onscreen.py --task robocasa/CupMugSorting --target-label mug --grasp-type handle_top_down --layout 1 --keep-open-sec 5`. Check `execution_summary.place_plan.zone` is `plain` for cup and `handled` for mug.
+
+## 2026-05-02 Fixed Left-Sink Layout
+
+- Completed: `CupMugSorting` and `CupMugSortingClean` now register the kitchen sink and bind object placement to the counter referenced by that sink, instead of choosing an arbitrary cabinet-adjacent counter.
+- Completed: sorting demo scripts default Cup/Mug tasks to RoboCasa `layout 1` when `--layout` is omitted. `layout001.yaml` places the sink on the left side of the main counter.
+- Completed: task configs now record `fixed_layout.layout_id: 1` and update verification commands to use the fixed left-sink layout.
+- Verification: syntax check passed for `cup_mug_sorting.py`, `demo_multi_cup_mug_sort.py`, and `demo_robocasa_reach_onscreen.py`; YAML parsing passed for both Cup/Mug task configs. `test_cup_mug_sorting_scene.py` still times out in this shell during robosuite import, matching previous local behavior.
+- Suggested verification: run `python scripts/demo_multi_cup_mug_sort.py --task robocasa/CupMugSortingClean --keep-open-sec 5` and confirm the printed env config has `"layout_ids": 1` and the viewer shows the left-side sink scene.
+
+## 2026-05-02 Strict Cup/Mug Scene Pinning
+
+- Completed: Cup/Mug demo scripts now pass RoboCasa `layout_and_style_ids: [[1, 1]]` for the default fixed scene instead of separately passing `layout_ids=1` and `style_ids=1`.
+- Rationale: RoboCasa samples from `layout_and_style_ids` during model setup; passing one explicit pair removes any ambiguity about layout/style expansion while still leaving `seed` unset so cup/mug instances and positions can vary.
+- Verification: syntax check passed for both demo scripts. Import-based config introspection still times out in this shell during robosuite initialization, so verify through the printed JSON from the viewer command.
+- Suggested verification: run `python scripts/demo_robocasa_reach_onscreen.py --task robocasa/CupMugSorting --target-label cup --grasp-type top_down --keep-open-sec 5` and confirm the printed config shows `"layout_ids": null`, `"style_ids": null`, and `"layout_and_style_ids": [[1, 1]]`.
+
+## 2026-05-02 Grasp Path Cleanup
+
+- Completed: removed the failed reach-only handle experiment paths from the active codebase: `oblique_reach`, `side_reach`, `anchor_top_down`, `handle_oblique_grasp`, and `handle_anchor_top_down`.
+- Completed: deleted dead experiment modules `arm/handle_experiments.py`, `arm/handle_phases.py`, `arm/handle_validation.py`, and `tests/test_handle_experiments.py`.
+- Completed: `scripts/demo_robocasa_reach_onscreen.py` now exposes only `top_down`, `handle_top_down`, and `any`; default candidate generation in configs/scripts is limited to `top_down` and `handle_top_down`.
+- Kept intentionally: internal `handle_grasp` candidate support in `vision/perception_loop.py` and `planner/candidates.py` remains only as a fallback source for synthesizing `handle_top_down` when direct handle-top-down is unavailable.
+- Verification: code search confirms the removed experiment keywords are gone from active `arm/`, `planner/`, `scripts/`, `tests/`, `configs/`, and `vision/` paths. Suggested verification: run `python -m unittest discover -s tests -p "test_candidate_planner.py"` plus the Cup/Mug onscreen cup and mug commands.
+
+## 2026-05-02 Getting Started CJY Docs
+
+- Completed: renamed `docs/getting-started.md` to `docs/getting_start_cjy.md` and updated `docs/index.md`.
+- Completed: expanded the getting-started guide with current `CupMugSorting` commands, including onscreen cup/mug runs, scene smoke, frame saving, expected JSON fields, fixed `layout_and_style_ids: [[1, 1]]`, and the active grasp path list.
+- Verification: confirmed the old path no longer exists, the new path exists, and `docs/index.md` links to `docs/getting_start_cjy.md`.

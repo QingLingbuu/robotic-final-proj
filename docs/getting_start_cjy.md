@@ -1,4 +1,4 @@
-# Getting Started
+# Getting Started CJY
 
 ## 1. What This Repository Contains
 
@@ -98,7 +98,104 @@ This baseline environment is the one to use for:
 
 For the current round's machine-local diagnosis memo and ad-hoc script shortcuts, see [`../LHYstart.md`](../LHYstart.md). Treat that file as a convenience note, but treat **this document** as the project-level source of truth for environment strategy.
 
-## 6. Common Commands
+## 6. CupMugSorting Commands
+
+The current RoboCasa demo task is `robocasa/CupMugSorting`.
+
+Scene behavior:
+
+- The kitchen scene is pinned to `layout_and_style_ids: [[1, 1]]`.
+- The sink/counter layout stays fixed.
+- Cup and mug instances may vary because `seed` is unset by default.
+- The multi-object scene contains 5 drinkware objects by default: 2 mugs and 3 cups.
+- Objects start in one row near the front counter edge.
+- Mugs are handled drinkware and use `handle_top_down`.
+- Cups are no-handle drinkware and use `top_down`.
+- After lifting, mugs are placed into the nearest sink basin.
+- After lifting, cups are placed on the right/front counter edge.
+
+### 6.1 Onscreen Scene / Motion Viewer
+
+Use this when you want to see the live `mjviewer` window:
+
+```powershell
+python scripts/demo_robocasa_reach_onscreen.py --task robocasa/CupMugSorting --target-label cup --grasp-type top_down --keep-open-sec 5
+```
+
+For the mug / handle path:
+
+```powershell
+python scripts/demo_robocasa_reach_onscreen.py --task robocasa/CupMugSorting --target-label mug --grasp-type handle_top_down --keep-open-sec 5
+```
+
+Expected env config at startup:
+
+```json
+"layout_ids": null,
+"style_ids": null,
+"layout_and_style_ids": [
+  [
+    1,
+    1
+  ]
+]
+```
+
+If you need a fully reproducible reset, add a seed explicitly:
+
+```powershell
+python scripts/demo_robocasa_reach_onscreen.py --task robocasa/CupMugSorting --target-label cup --grasp-type top_down --seed 1 --keep-open-sec 5
+```
+
+### 6.2 Classification / Scene Smoke
+
+Use this when you only need to initialize the task, run perception, and print the classification summary:
+
+```powershell
+python scripts/demo_multi_cup_mug_sort.py --task robocasa/CupMugSorting --keep-open-sec 5
+```
+
+Clean two-object validation scene:
+
+```powershell
+python scripts/demo_multi_cup_mug_sort.py --task robocasa/CupMugSortingClean --keep-open-sec 5
+```
+
+Save the current RGB frame:
+
+```powershell
+python scripts/demo_multi_cup_mug_sort.py --task robocasa/CupMugSorting --keep-open-sec 5 --save-frame outputs/cup_mug_sorting.png
+```
+
+### 6.3 Expected JSON Fields
+
+For cup runs, check:
+
+```text
+drinkware_classification.selected_assignment.has_handle = false
+drinkware_classification.selected_assignment.strategy = top_down
+execution_summary.place_plan.zone = opposite_counter
+```
+
+For mug runs, check:
+
+```text
+drinkware_classification.selected_assignment.has_handle = true
+drinkware_classification.selected_assignment.strategy = handle_top_down
+execution_summary.place_plan.zone = sink
+execution_summary.place_plan.placement_rule = nearest_sink_basin
+```
+
+### 6.4 Supported Grasp Paths
+
+The active RoboCasa Cup/Mug path intentionally exposes only:
+
+- `top_down`
+- `handle_top_down`
+
+The old `oblique_reach`, `side_reach`, and `anchor_top_down` experiment paths have been removed from the active demo.
+
+## 7. Other Common Commands
 
 Print the current RoboCasa setup guidance:
 
@@ -130,7 +227,7 @@ Run evaluation and save a rollout video:
 python scripts/eval_rl.py --config configs/rl/single_arm_robocasa_ppo.yaml --latest --save-video
 ```
 
-Run the currently validated RoboCasa onscreen automatic reach demo:
+Run the older RoboCasa onscreen automatic reach demo:
 
 ```powershell
 python scripts/demo_robocasa_reach_onscreen.py --task robocasa/CoffeeSetupMug --target-label mug
@@ -180,7 +277,7 @@ Run the main robosuite project flow:
 python main.py
 ```
 
-## 7. Output Paths
+## 8. Output Paths
 
 Project artifacts must go under:
 
@@ -194,7 +291,7 @@ outputs/
 
 Do not treat `.sisyphus/` or `scripts/.sisyphus/` as project output locations.
 
-## 8. What To Commit
+## 9. What To Commit
 
 Safe to commit:
 
@@ -213,7 +310,7 @@ Do not commit:
 - runtime `outputs/`
 - tool-private `.sisyphus/`
 
-## 9. Current Caveats
+## 10. Current Caveats
 
 - `third_party/robocasa` includes large simulator assets, so the repository will be much bigger than before
 - `gymnasium` observation-space warnings on the RoboCasa path are still unresolved

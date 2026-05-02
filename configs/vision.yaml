@@ -31,7 +31,6 @@ dual_grasp_axis: y
 
 candidate_types:
   - top_down
-  - handle_grasp
   - handle_top_down
 default_gripper_width: 0.04
 handle_gripper_width: 0.03
@@ -56,5 +55,8 @@ handle_top_down_width_min: 0.015
 handle_top_down_width_max: 0.08
 top_down_surface_quantile: 0.85
 top_down_penetration_offset: 0.01
+cup_like_top_down_penetration_offset: 0.035
 top_down_width_margin: 0.01
 top_down_width_min: 0.04
+top_down_width_max: 0.08
+cup_like_top_down_width_min: 0.075

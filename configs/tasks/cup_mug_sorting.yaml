@@ -1,0 +1,36 @@
+task: robocasa/CupMugSorting
+scene_id: cup_mug_sorting_left_sink_layout001
+fixed_layout:
+  layout_id: 1
+  style_id: 1
+  seed: optional
+  reason: layout001 has the sink on the left side of the main counter; CupMugSorting binds object placement to the counter referenced by that sink. Style is fixed for stable onscreen appearance, while seed is left unset by default so cup/mug instances and reset sampling can vary.
+object_count:
+  mugs: 2
+  cups: 3
+plain_cup_object_scale:
+  - 0.75
+  - 0.75
+  - 1.0
+plain_cup_max_size:
+  xy_meters: 0.072
+  reason: Panda top-down gripper opening is about 0.08m, so plain cups must be smaller than the fully-open gripper.
+labels:
+  - mug
+  - cup
+  - glass cup
+sorting:
+  handled_zone: sink
+  plain_zone: opposite_counter
+  handled_strategy: handle_top_down
+  plain_strategy: top_down
+  handled_arm: right
+  plain_arm: left
+verification:
+  smoke_command: python scripts/demo_multi_cup_mug_sort.py --task robocasa/CupMugSorting --layout 1 --keep-open-sec 1
+  success_criteria:
+    - CupMugSorting registers in RoboCasa.
+    - summary.targets contains multiple drinkware detections when the detector is available.
+    - assignments use handle_top_down for objects with a handle_top_down candidate.
+    - assignments use top_down for objects without a handle_top_down candidate.
+    - place_plan.zone is sink for handled mugs and opposite_counter for plain cups.

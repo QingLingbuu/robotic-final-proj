@@ -21,8 +21,11 @@ class HandleTopDownCandidateTests(unittest.TestCase):
         loop.default_gripper_width = 0.04
         loop.top_down_surface_quantile = 0.85
         loop.top_down_penetration_offset = 0.01
+        loop.cup_like_top_down_penetration_offset = 0.035
         loop.top_down_width_margin = 0.01
         loop.top_down_width_min = 0.04
+        loop.top_down_width_max = 0.08
+        loop.cup_like_top_down_width_min = 0.075
         loop.handle_width_margin = 0.01
         loop.handle_width_min = 0.02
         loop.handle_top_down_inset = 0.0
@@ -38,6 +41,47 @@ class HandleTopDownCandidateTests(unittest.TestCase):
         loop.handle_side_band_fraction = 0.35
         loop.handle_height_quantiles = (0.20, 0.95)
         return loop
+
+    def test_cup_like_top_down_candidate_prefers_wide_gripper_opening(self):
+        loop = self._loop()
+        target = {"label": "cup", "pos": [0.0, 0.0, 1.0], "conf": 0.9}
+        narrow_cup_points = np.array(
+            [
+                [-0.015, -0.015, 1.00],
+                [-0.015, 0.015, 1.00],
+                [0.015, -0.015, 1.00],
+                [0.015, 0.015, 1.00],
+                [0.000, 0.000, 1.04],
+            ],
+            dtype=float,
+        )
+
+        candidate = loop._estimate_top_down_candidate(target, narrow_cup_points, 1)
+
+        self.assertEqual(candidate["grasp_type"], "top_down")
+        self.assertGreaterEqual(candidate["gripper_width"], 0.075)
+        self.assertLessEqual(candidate["gripper_width"], 0.08)
+
+    def test_cup_like_top_down_candidate_targets_below_rim(self):
+        loop = self._loop()
+        target = {"label": "cup", "pos": [0.0, 0.0, 1.0], "conf": 0.9}
+        cup_points = np.array(
+            [
+                [-0.030, -0.030, 1.00],
+                [-0.030, 0.030, 1.00],
+                [0.030, -0.030, 1.00],
+                [0.030, 0.030, 1.00],
+                [-0.035, -0.035, 1.08],
+                [-0.035, 0.035, 1.08],
+                [0.035, -0.035, 1.08],
+                [0.035, 0.035, 1.08],
+            ],
+            dtype=float,
+        )
+
+        candidate = loop._estimate_top_down_candidate(target, cup_points, 1)
+
+        self.assertLessEqual(candidate["pos"][2], 1.08 - 0.03)
 
     def test_diagnostics_include_handle_top_down_geometry(self):
         body_points = np.array(

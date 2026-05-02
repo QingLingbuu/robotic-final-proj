@@ -96,8 +96,15 @@ class VisionPerceptionLoop:
         self.default_gripper_width = float(vision_config.get("default_gripper_width", 0.04))
         self.top_down_surface_quantile = float(vision_config.get("top_down_surface_quantile", 0.85))
         self.top_down_penetration_offset = float(vision_config.get("top_down_penetration_offset", 0.01))
+        self.cup_like_top_down_penetration_offset = float(
+            vision_config.get("cup_like_top_down_penetration_offset", 0.035)
+        )
         self.top_down_width_margin = float(vision_config.get("top_down_width_margin", 0.01))
         self.top_down_width_min = float(vision_config.get("top_down_width_min", self.default_gripper_width))
+        self.top_down_width_max = float(vision_config.get("top_down_width_max", 0.08))
+        self.cup_like_top_down_width_min = float(
+            vision_config.get("cup_like_top_down_width_min", 0.075)
+        )
         self.handle_gripper_width = float(
             vision_config.get("handle_gripper_width", self.default_gripper_width)
         )
@@ -343,14 +350,24 @@ class VisionPerceptionLoop:
         if top_points.shape[0] == 0:
             top_points = point_cloud
         top_center = np.mean(top_points[:, :2], axis=0)
+        label = str(target.get("label", "")).strip().lower()
+        penetration_offset = self.top_down_penetration_offset
+        if label in self.handle_labels:
+            penetration_offset = max(penetration_offset, self.cup_like_top_down_penetration_offset)
         top_down_pos = [
             float(top_center[0]),
             float(top_center[1]),
-            float(z_top - self.top_down_penetration_offset),
+            float(z_top - penetration_offset),
         ]
         top_xy = top_points[:, :2]
         xy_span = np.max(top_xy, axis=0) - np.min(top_xy, axis=0)
-        estimated_width = max(self.top_down_width_min, float(np.min(xy_span)) + self.top_down_width_margin)
+        width_min = self.top_down_width_min
+        if label in self.handle_labels:
+            width_min = max(width_min, self.cup_like_top_down_width_min)
+        estimated_width = min(
+            self.top_down_width_max,
+            max(width_min, float(np.min(xy_span)) + self.top_down_width_margin),
+        )
         top_ratio = top_points.shape[0] / point_cloud.shape[0]
         z_band = max(z_top - z_threshold, 1e-6)
         top_surface_quality = min(1.0, z_band / max(z_top, 1e-6))
@@ -814,6 +831,69 @@ class VisionPerceptionLoop:
                     next_id += 1
                 continue
         return candidates
+
+    def infer_all_targets_with_diagnostics(self, rgb_image, depth_image):
+        """Infer every detected target object without changing the queue payload schema."""
+        candidate_labels = self.target_labels + self.obstacle_labels
+        detections = self.detector.detect(rgb_image, candidate_labels)
+
+        targets = []
+        for detection in detections:
+            detection_label = str(detection.label).strip().lower()
+            if detection_label not in self.target_labels:
+                continue
+
+            world_pos = self._detection_to_world_pos(detection, depth_image)
+            if world_pos is None:
+                continue
+
+            point_cloud = self._extract_bbox_point_cloud(detection, depth_image)
+            foreground_filter = dict(getattr(self, "_last_bbox_foreground_filter", {}))
+            item = {
+                "label": detection_label,
+                "pos": world_pos,
+                "conf": float(detection.score),
+            }
+
+            handle_point_cloud = None
+            handle_side_band = None
+            if detection_label in self.handle_labels:
+                handle_point_cloud, handle_side_band = self._choose_handle_side_point_cloud(
+                    detection,
+                    depth_image,
+                    item,
+                )
+
+            self._grasp_candidate_diagnostics = {}
+            grasp_candidates = self._build_grasp_candidates(
+                item,
+                point_cloud,
+                handle_point_cloud=handle_point_cloud,
+                handle_side_band=handle_side_band,
+            )
+            diagnostics = dict(getattr(self, "_grasp_candidate_diagnostics", {}))
+            bbox_diagnostics = self._bbox_diagnostics(detection, depth_image)
+            bbox_diagnostics["foreground_depth_filter"] = foreground_filter
+            diagnostics["target_bbox"] = bbox_diagnostics
+
+            targets.append(
+                {
+                    "label": item["label"],
+                    "pos": item["pos"],
+                    "conf": item["conf"],
+                    "grasp_candidates": grasp_candidates,
+                    "diagnostics": diagnostics,
+                }
+            )
+
+        if hasattr(self, "_grasp_candidate_diagnostics"):
+            delattr(self, "_grasp_candidate_diagnostics")
+
+        targets.sort(key=lambda item: float(item.get("conf", 0.0)), reverse=True)
+        return {
+            "status": "ready" if targets else "error",
+            "targets": targets,
+        }
 
     def infer_detected_objects(self, rgb_image, depth_image):
         """Infer target and obstacles from one RGB-D frame."""

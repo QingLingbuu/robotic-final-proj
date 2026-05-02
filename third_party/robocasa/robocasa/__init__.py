@@ -457,6 +457,10 @@ from robocasa.environments.kitchen.composite.organizing_dishes_and_containers.em
 from robocasa.environments.kitchen.composite.organizing_dishes_and_containers.organize_mugs_by_handle import (
     OrganizeMugsByHandle,
 )
+from robocasa.environments.kitchen.composite.organizing_dishes_and_containers.cup_mug_sorting import (
+    CupMugSorting,
+    CupMugSortingClean,
+)
 from robocasa.environments.kitchen.composite.organizing_dishes_and_containers.stack_bowls_cabinet import (
     StackBowlsCabinet,
 )

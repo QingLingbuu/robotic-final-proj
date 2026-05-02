@@ -33,14 +33,24 @@ from arm.base_torso import (
     preposition_base_torso,
 )
 from arm.calibration import calibrate_position_action_mapping
-from arm.handle_experiments import execute_reach_handle, execute_reach_oblique_handle
 from arm.reachability import diagnose_reachability
 from arm.reach_retry import should_retry_with_preposition
 from arm.robocasa_execution import get_robot0_eef_quat
-from arm.robocasa_primitives import execute_close, execute_lift, execute_oriented_top_down_reach, execute_reach
+from arm.robocasa_primitives import execute_close, execute_lift, execute_oriented_top_down_reach, execute_place, execute_reach
+from planner.sorting_zones import choose_cup_mug_place_target
+from vision.detected_objects import build_detected_objects
 from vision.perception_loop import VisionPerceptionLoop
+from vision.sorting_policy import (
+    assign_sim_metadata_to_targets,
+    build_sim_metadata_fallback_target,
+    classify_drinkware_targets,
+    select_drinkware_target,
+)
 from planner.candidates import choose_reachable_candidate
 
+
+DEFAULT_LEFT_SINK_LAYOUT_ID = 1
+CUP_MUG_SORTING_TASKS = {"CupMugSorting", "CupMugSortingClean"}
 
 
 def load_yaml(path):
@@ -70,7 +80,19 @@ def normalize_depth(depth, sim):
     return np.asarray(depth, dtype=float)
 
 
-def build_env_config(task_name, camera_name, width, height, layout=None, style=None):
+def build_env_config(
+    task_name,
+    camera_name,
+    width,
+    height,
+    layout=None,
+    style=None,
+    seed=None,
+    layout_and_style_ids=None,
+):
+    if layout_and_style_ids is not None:
+        layout = None
+        style = None
     return {
         "env_name": task_name.replace("robocasa/", "", 1),
         "robots": "PandaOmron",
@@ -89,8 +111,9 @@ def build_env_config(task_name, camera_name, width, height, layout=None, style=N
         "renderer": "mjviewer",
         "layout_ids": layout,
         "style_ids": style,
+        "seed": seed,
         "obj_instance_split": None,
-        "layout_and_style_ids": None,
+        "layout_and_style_ids": layout_and_style_ids,
         "translucent_robot": True,
     }
 
@@ -382,26 +405,61 @@ def build_sim_handle_mesh_debug(env, candidate, candidate_diagnostics, obj_name=
     }
 
 
+def cup_mug_sorting_sim_objects(env):
+    metadata = getattr(env, "sorting_metadata", {}) or {}
+    obj_body_id = getattr(env, "obj_body_id", {}) or {}
+    sim = getattr(env, "sim", None)
+    if sim is None:
+        return []
+    objects = []
+    for name, info in metadata.items():
+        if name not in obj_body_id:
+            continue
+        objects.append(
+            {
+                "name": name,
+                "pos": np.asarray(sim.data.body_xpos[obj_body_id[name]], dtype=float).tolist(),
+                "has_handle": bool(info.get("has_handle")),
+            }
+        )
+    return objects
+
+
+def _fixture_anchor(fixture):
+    if fixture is None:
+        return None
+    size = getattr(fixture, "size", None)
+    return {
+        "pos": np.asarray(getattr(fixture, "pos"), dtype=float).tolist(),
+        "rot": float(getattr(fixture, "rot", 0.0) or 0.0),
+        "size": None if size is None else np.asarray(size, dtype=float).tolist(),
+        "width": None if getattr(fixture, "width", None) is None else float(fixture.width),
+        "depth": None if getattr(fixture, "depth", None) is None else float(fixture.depth),
+        "height": None if getattr(fixture, "height", None) is None else float(fixture.height),
+    }
+
+
+def cup_mug_sorting_place_anchors(env):
+    return {
+        "sink": _fixture_anchor(getattr(env, "sink", None)),
+        "counter": _fixture_anchor(getattr(env, "counter", None)),
+    }
+
+
 
 def main():
     parser = argparse.ArgumentParser(description="Run a RoboCasa reach in the live onscreen viewer.")
     parser.add_argument("--task", default="robocasa/CoffeeSetupMug")
     parser.add_argument("--target-label", default="mug")
     parser.add_argument("--candidate-id", type=int, default=None)
-    parser.add_argument("--grasp-type", default="any", choices=["top_down", "handle_grasp", "handle_top_down", "any"],
+    parser.add_argument("--grasp-type", default="any", choices=["top_down", "handle_top_down", "any"],
                         help="Filter candidates by grasp type (default: any)")
-    parser.add_argument("--handle-mode", default="off",
-                        choices=["off", "anchor_top_down", "oblique_reach", "side_reach"],
-                        help="Explicit experimental mode for handle candidates. Default keeps the stable top-down path.")
-    parser.add_argument("--handle-noncontact-only", action="store_true",
-                        help="Debug safety mode: stop handle reach-only before the contact approach phase.")
-    parser.add_argument("--handle-abort-on-position-drift", action="store_true",
-                        help="Debug safety mode: abort handle orientation alignment if position drift exceeds the safety threshold.")
     parser.add_argument("--camera-name", default="robot0_agentview_center")
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--layout", type=int, default=None)
     parser.add_argument("--style", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--allow-download", action="store_true")
     parser.add_argument("--skip-axis-calibration", action="store_true")
     parser.add_argument("--diagnose-action-space", action="store_true",
@@ -436,12 +494,30 @@ def main():
     parser.add_argument("--keep-open-sec", type=float, default=0.0)
     args = parser.parse_args()
 
+    env_name = args.task.replace("robocasa/", "", 1)
+    layout_id = args.layout
+    if layout_id is None and env_name in CUP_MUG_SORTING_TASKS:
+        layout_id = DEFAULT_LEFT_SINK_LAYOUT_ID
+    style_id = args.style
+    if style_id is None and env_name in CUP_MUG_SORTING_TASKS:
+        style_id = 1
+    seed = args.seed
+    layout_and_style_ids = None
+    if env_name in CUP_MUG_SORTING_TASKS and layout_id is not None and style_id is not None:
+        layout_and_style_ids = [[int(layout_id), int(style_id)]]
+
     thresholds_config = load_yaml(PROJECT_ROOT / "configs" / "thresholds.yaml")
     vision_config = load_yaml(PROJECT_ROOT / "configs" / "vision.yaml")
     vision_config["target_labels"] = [args.target_label]
     vision_config["obstacle_labels"] = []
+    use_drinkware_classification = (
+        env_name in CUP_MUG_SORTING_TASKS
+        and args.target_label.strip().lower() in {"cup", "glass cup", "mug"}
+    )
+    if use_drinkware_classification:
+        vision_config["target_labels"] = ["mug", "cup", "glass cup"]
     if "mug" in args.target_label.lower() or "cup" in args.target_label.lower():
-        vision_config["candidate_types"] = ["top_down", "handle_top_down", "handle_grasp"]
+        vision_config["candidate_types"] = ["top_down", "handle_top_down"]
         vision_config["handle_labels"] = ["cup", "mug", "glass cup"]
     if args.allow_download:
         vision_config["local_files_only"] = False
@@ -451,8 +527,10 @@ def main():
         camera_name=args.camera_name,
         width=args.width,
         height=args.height,
-        layout=args.layout,
-        style=args.style,
+        layout=layout_id,
+        style=style_id,
+        seed=seed,
+        layout_and_style_ids=layout_and_style_ids,
     )
 
     print(colored("Initializing onscreen RoboCasa environment...", "yellow"))
@@ -490,7 +568,49 @@ def main():
             camera_config=camera_config,
             conf_thresh=float(thresholds_config["CONF_THRESH"]),
         )
-        payload, diagnostics = loop.infer_detected_objects_with_diagnostics(rgb, depth)
+        classification_summary = None
+        if use_drinkware_classification:
+            all_targets_summary = loop.infer_all_targets_with_diagnostics(rgb, depth)
+            sim_objects = cup_mug_sorting_sim_objects(env)
+            classified_targets = assign_sim_metadata_to_targets(
+                all_targets_summary.get("targets", []),
+                sim_objects,
+            )
+            selected_target, selected_assignment = select_drinkware_target(
+                classified_targets,
+                requested_label=args.target_label,
+            )
+            fallback_used = False
+            if selected_target is None:
+                selected_target, selected_assignment = build_sim_metadata_fallback_target(
+                    sim_objects,
+                    requested_label=args.target_label,
+                )
+                fallback_used = selected_target is not None
+            classification_summary = {
+                "requested_label": args.target_label,
+                "sim_objects": sim_objects,
+                "assignments": classify_drinkware_targets(classified_targets),
+                "selected_assignment": selected_assignment,
+                "fallback_used": fallback_used,
+            }
+            if selected_target is None:
+                raise RuntimeError(
+                    "Drinkware classification did not find a matching target for "
+                    f"{args.target_label!r}. Summary: {classification_summary}"
+                )
+            payload = build_detected_objects(
+                target_label=selected_target["label"],
+                target_pos=selected_target["pos"],
+                target_conf=selected_target["conf"],
+                obstacles=[],
+                status="ready",
+                conf_thresh=float(thresholds_config["CONF_THRESH"]),
+                grasp_candidates=selected_target.get("grasp_candidates", []),
+            )
+            diagnostics = {"grasp_candidates": selected_target.get("diagnostics", {})}
+        else:
+            payload, diagnostics = loop.infer_detected_objects_with_diagnostics(rgb, depth)
         candidate_summaries = [
             {
                 "id": candidate.get("id"),
@@ -506,7 +626,6 @@ def main():
             payload,
             candidate_id=args.candidate_id,
             grasp_type=grasp_type_filter,
-            handle_mode=args.handle_mode,
         )
         if selected_candidate is None:
             raise RuntimeError(
@@ -521,6 +640,7 @@ def main():
             "reason": reason,
             "candidate": selected_candidate,
             "payload_status": payload.get("status"),
+            "drinkware_classification": classification_summary,
             "candidate_rejection": selected_rejection,
             "perception_candidates": candidate_summaries,
             "grasp_candidate_diagnostics": diagnostics.get("grasp_candidates", {}),
@@ -546,6 +666,7 @@ def main():
         return selected_candidate, selected_rejection, summary
 
     candidate, candidate_rejection, initial_candidate_summary = infer_candidate_from_obs(obs, reason="initial")
+    active_candidate_summary = initial_candidate_summary
 
     print(json.dumps(initial_candidate_summary, indent=2))
 
@@ -596,26 +717,6 @@ def main():
         return next_obs, summary
 
     def run_reach(obs_for_reach):
-        if candidate["grasp_type"] == "handle_grasp":
-            return execute_reach_handle(
-                env,
-                obs=obs_for_reach,
-                candidate=candidate,
-                action_mapping=action_mapping,
-                render_sleep_sec=float(args.render_sleep_sec),
-                include_contact_approach=not bool(args.handle_noncontact_only),
-                abort_pos_error=0.12 if args.handle_abort_on_position_drift else None,
-            )
-        if candidate["grasp_type"] == "handle_oblique_grasp":
-            return execute_reach_oblique_handle(
-                env,
-                obs=obs_for_reach,
-                candidate=candidate,
-                action_mapping=action_mapping,
-                render_sleep_sec=float(args.render_sleep_sec),
-                include_contact_approach=not bool(args.handle_noncontact_only),
-                abort_pos_error=0.12 if args.handle_abort_on_position_drift else None,
-            )
         if candidate["grasp_type"] == "handle_top_down":
             return execute_oriented_top_down_reach(
                 env,
@@ -645,6 +746,7 @@ def main():
                 reason="after_base_preposition",
             )
             candidate_refresh_summary["previous_candidate"] = candidate_before_preposition
+            active_candidate_summary = candidate_refresh_summary
             print(json.dumps({"candidate_after_base_preposition": candidate_refresh_summary}, indent=2))
 
     current_obs, reach_summary = run_reach(current_obs)
@@ -667,6 +769,7 @@ def main():
                 reason="after_retry_base_preposition",
             )
             retry_candidate_refresh_summary["previous_candidate"] = previous_candidate
+            active_candidate_summary = retry_candidate_refresh_summary
             print(json.dumps({"candidate_after_retry_base_preposition": retry_candidate_refresh_summary}, indent=2))
         current_obs, reach_summary = run_reach(current_obs)
         reachability_diagnosis = diagnose_reachability(reach_summary, candidate=candidate)
@@ -683,6 +786,8 @@ def main():
 
     close_summary = None
     lift_summary = None
+    place_plan = None
+    place_summary = None
     failure_phase = None
 
     if reach_summary.get("reach_only"):
@@ -706,6 +811,25 @@ def main():
             )
             if not lift_summary["lift_success"]:
                 failure_phase = "lift"
+            elif use_drinkware_classification:
+                classification = active_candidate_summary.get("drinkware_classification") or {}
+                selected_assignment = classification.get("selected_assignment")
+                sim_objects = classification.get("sim_objects", [])
+                if selected_assignment is not None:
+                    place_plan = choose_cup_mug_place_target(
+                        selected_assignment,
+                        sim_objects,
+                        place_anchors=cup_mug_sorting_place_anchors(env),
+                    )
+                    current_obs, place_summary = execute_place(
+                        env,
+                        obs=current_obs,
+                        place_target=place_plan["target_pos"],
+                        action_mapping=action_mapping,
+                        render_sleep_sec=float(args.render_sleep_sec),
+                    )
+                    if not place_summary["place_success"]:
+                        failure_phase = "place"
 
     execution_summary = {
         "candidate": {
@@ -726,6 +850,8 @@ def main():
         "reachability_diagnosis": reachability_diagnosis,
         "close": close_summary,
         "lift": lift_summary,
+        "place_plan": place_plan,
+        "place": place_summary,
         "overall_success": failure_phase is None,
         "failure_phase": failure_phase,
     }

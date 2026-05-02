@@ -2,7 +2,7 @@
 
 ## Core Docs
 
-- [Getting Started](./getting-started.md)
+- [Getting Started CJY](./getting_start_cjy.md)
 - [Current Task Board](./task.md)
 - [RoboCasa Migration Architecture](./architecture/robocasa-migration.md)
 - [LHYstart](../LHYstart.md)
@@ -13,7 +13,7 @@
 
 ## Intent
 
-- `docs/getting-started.md`: project-level environment setup, structure, and common commands
+- `docs/getting_start_cjy.md`: project-level environment setup, structure, and current CupMugSorting commands
 - `docs/task.md`: current repository status, active blockers, recommended next step
 - `LHYstart.md`: machine-local quick-start memo for the diagnosis / demo scripts added in this round
 - `docs/architecture/`: stable architecture and migration decisions
