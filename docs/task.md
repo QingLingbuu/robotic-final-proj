@@ -1,186 +1,135 @@
-# 项目任务总结
+# 项目任务看板
 
-> 维护约束：凡是影响项目现状、已完成改动、下一步优先级或剩余任务清单的开发工作，必须同步更新本文件 `docs/task.md`，避免实现进度与任务文档脱节。
+> 维护约束：凡是影响项目现状、完成工作、下一步优先级、运行结果或交接信息的改动，必须同步更新本文件。历史细节应压缩到 `docs/archive/`，本文件只保留当前可执行状态。
 
-## 一、当前状态
+## 当前结论
 
-当前仓库已经从“混合实验目录”收口成较清晰的工程结构：
+- 当前稳定基线仍是 `robosuite` + PandaOmron 单臂 top-down 抓取，用它验证 perception / planner / execution 接口。
+- `CoffeeSetupMug` 的 top-down 路径已被用户手动验证可 reach / close / lift；当前最终 demo 主线收敛为 top-down。
+- handle side / oblique 抓取保留为局限性展示路径；允许在 handle 展示中接触甚至打翻杯子，但最终方案仍使用 top-down。
+- 已撤销：`handle_guided_top_down` 中间展示路径。实际运行显示它会引入语义/执行误解，当前不再保留为 demo 模式。
+- 最终 base 策略：只有保守小步移动 base；base 发生有效移动后默认重新渲染并重新跑 vision，使用刷新后的 candidate 再 reach，避免沿用移动前的旧抓取点。
+- 本分支目标是先把混乱 demo 拆成可审查模块，并加入诊断工具；暂不把 handle 抓取设为默认成功路径。
+- 旧版长任务记录已归档到 `docs/archive/task-2026-05-01-pre-cleanup.md`，当前文件只保留短看板。
 
-- 主业务代码位于 `arm/`、`fsm/`、`vision/`、`rl/`
-- 运行时支撑统一收口到 `runtime/`
-- 训练、评估、setup、validate 脚本统一归到 `scripts/`
-- 外部源码统一 vendoring 到 `third_party/robocasa` 与 `third_party/robosuite`
-- RL 输出路径统一固定到 `outputs/rl/`
-- 标准上手与环境配置流程以 `docs/getting-started.md` 为准，其他文档和任务交接应避免复制一套平行安装步骤
+## 分组状态
 
-项目当前仍以 `robosuite` 作为稳定联调基线，同时保留可运行的 `RoboCasa` 单臂 RL smoke 路径。第三档 candidate-driven grasping 主链路已经打通到 contract / planning / logging / RL selector interface 这一层，但候选几何仍是基于目标点的占位实现。
+### vision/perception
 
-## 二、本轮已完成
+- 已完成：`vision/perception_loop.py` 能输出 `top_down`、`handle_grasp` 与 `handle_top_down` candidate，demo 继续通过 `VisionPerceptionLoop` 生成 `detected_objects`。
+- 保持不变：`detected_objects` schema 与 `perception_queue` 协议未在本轮重构中修改。
+- 已完成：`handle_top_down` 点云入口增加 bbox 内前景深度连通过滤，用明显深度断点排除背景 / 台面点；把手估计继续采用“先建模杯身、再用残差簇识别把手”的全局点云方法，并保留 sim mesh 只做验证对照。
+- 已修正：`handle_top_down` 的 closing axis 现在使用把手 outward / radial 方向，避免夹爪沿把手切向平行闭合；planner fallback 从 `handle_grasp` 合成 `handle_top_down` 时也使用同一语义。
+- 风险：handle candidate 的几何位置已通过 sim mesh 对照降到毫米级误差，但接触高度 / 闭合宽度仍需继续用真实 RoboCasa 执行验证。
 
-- 统一了 runtime bootstrap，不再依赖手工 `PYTHONPATH`
-- 清理了 `.sisyphus` 相关项目产物
-- 清理了根目录旧 smoke 脚本和旧终端备忘
-- 统一了 `third_party/` 布局，并将 `robocasa` / `robosuite` 转为 vendored code
-- 清理了 `third_party/` 下的缓存和 `egg-info`
-- 收紧了 `.gitignore`，避免继续提交日志、缓存和构建产物
-- 将原来的 `infra/`、`ipc/`、`logs/` 三个单文件目录收口为统一的 `runtime/` 包
-- 将 `scripts/` 分层为：
-  - 顶层主入口：`train_rl.py`、`eval_rl.py`
-  - setup：`scripts/setup/`
-  - validate：`scripts/validate/`
-- 完成第三档抓取链路的第一阶段落地：
-  - `vision/detected_objects.py` 支持 `grasp_candidates` schema，且 `grasp_candidates` 成为强制协议字段
-  - `vision/perception_loop.py` 的 `top_down` candidate 已从“目标点包装”升级为几何启发式版本：基于顶部高分位层估计顶部中心、抓取高度、朝下朝向、顶部展宽驱动的 `gripper_width`，以及结合顶部覆盖率与表面集中度的候选 `score`
-  - `vision/perception_loop.py` 现已为 `cup/mug` 增加几何启发式 `handle_grasp` candidate：从 bbox 局部 3D 点云里提取侧向外凸点集，估计 `P_handle`，并进一步补上几何启发式 `orientation`、基于 handle 点集厚度投影的 `gripper_width`，以及结合外凸强度与把手点占比的候选 `score`，失败时自动回退 `top_down`
-  - `fsm/perception_cycle.py` / `fsm/state_machine.py` 已切到 candidate-aware planning，支持选中第一个 candidate 与抓空后切换下一个 candidate
-  - `main.py` 单臂抓取路径开始真正消费 `selected_candidate`，candidate source 不再错误叠加旧的单臂 z-offset
-  - `runtime/run_logger.py` 已记录 `candidate_count`、`selected_candidate_id`、`selected_candidate_score`、`failure_stage`
-  - `rl/contracts.py` / `rl/harness.py` 已提供 selector contract 与 padded selector observation helper
-  - 已完成端到端 verification slice：perception payload -> FSM candidate selection / retry -> candidate-driven single-arm target -> run log -> RL selector observation
-- 新增和整理文档：
-  - [Getting Started](/D:/Code/MyRepositories/robotic-final-proj/docs/getting-started.md)
-  - [Docs Index](/D:/Code/MyRepositories/robotic-final-proj/docs/index.md)
-  - [RoboCasa Migration Architecture](/D:/Code/MyRepositories/robotic-final-proj/docs/architecture/robocasa-migration.md)
-  - [2026-04 History Summary](/D:/Code/MyRepositories/robotic-final-proj/docs/archive/2026-04-history.md)
-- 新增 `scripts/demo_vision_grasp.py`，提供独立的视觉抓取演示入口，强制走 GroundingDINO -> `detected_objects` -> `perception_queue` -> FSM candidate selection -> 单臂抓取 这条链路，便于验证“视觉模型参与抓取”的全过程；本轮仅完成静态脚本校验，未做实际仿真运行验证
-- 修正 robosuite 视觉几何基线：
-  - `arm/env_wrapper.py` 现会将 robosuite 归一化 depth 转换为真实米制深度
-  - `arm/env_wrapper.py` 现优先读取 robosuite 运行时相机内外参，而不是仅依赖 `configs/camera.yaml` 占位值
-  - `scripts/demo_vision_grasp.py` 与 `main.py` 现会使用运行时相机参数构建视觉坐标变换，避免“检测结果有了，但 3D 抓取点明显偏离物体真实高度”的旧问题
-  - `arm/env_wrapper.py` 现统一将 robosuite 默认的 OpenGL 图像 / depth 观测翻转到与 robosuite 官方 camera transform 测试一致的方向，减少像素反投影因图像上下颠倒导致的 3D 点云错位
-  - `vision/perception_loop.py` 现支持优先使用 `camera_to_world_transform` 做像素到世界坐标变换，与 robosuite 官方 `transform_from_pixels_to_world` 语义对齐；`scripts/demo_vision_grasp.py` 与 `main.py` 也已把该 4x4 变换注入视觉配置
-- 新增 `scripts/demo_robocasa_vision.py`，用于 RoboCasa mug / cup 任务的视觉 smoke；当前已验证 RoboCasa `CoffeeSetupMug` 可起环境、输出 RGB-D、完成 mug 2D 检测，并生成包含 `top_down` / `handle_grasp` 的 3D candidate payload
-- `scripts/demo_robocasa_vision.py` 现会额外导出 `png + json` 可视化产物到 `outputs/vision/robocasa_smoke/`，便于人工核对 mug 检测框、target 位置和 grasp candidates；本轮未重新跑仿真，只完成脚本改动与只读 AST 校验
-- `scripts/demo_robocasa_vision.py` 现支持 `--execute-reach` 最小执行 smoke：基于视觉选中的 RoboCasa candidate，让机械臂以张开夹爪姿态先移动到候选点上方，再下探到候选点附近，并输出 `robot0_eef_start` / `robot0_eef_final` / `final_error_to_settle` 等摘要；本轮未在当前沙箱里实际跑通环境，只完成脚本实现与只读 AST 校验
-- `arm/env_wrapper.py` 与 `scripts/demo_robocasa_vision.py` 现已切到 RoboCasa 运行时相机路径：wrapper 会记录实际命中的 `active_camera_name` / `active_rgb_key` / `active_depth_key`，并优先从底层 sim 读取相机内外参与 `camera_to_world_transform`；这是为修复此前 RoboCasa visual candidate 与 `robot0_eef_pos` 明显不在同一世界坐标系的问题
-- `scripts/demo_robocasa_vision.py` 的 `--execute-reach` 现默认先做 RoboCasa 动作轴标定：通过 `action.end_effector_position` 的三轴对称脉冲，估计 “动作轴 -> 世界位移” 3x3 映射矩阵，再用 `pinv` 把世界系 reach 误差反解成动作命令；这是为修复坐标系对齐后仍存在的 RoboCasa 控制轴语义不一致问题
-- `scripts/demo_robocasa_vision.py` 现已确认相机采集帧本身正常、黑屏根因在本地视频编码链，因此脚本新增 `--save-frames` / `--save-gif` 作为主可视化导出路径；当前更推荐用逐帧 PNG 或 GIF 排查最后下探轨迹，而不是继续依赖黑屏的本地 mp4/avi 播放链
-- 修复 `scripts/demo_robocasa_vision.py` 的 `_resolve_initial_rgbd()` 自递归错误；该 helper 现在会先读取 wrapper 的 `env.get_observation()`，再按 raw observation key 做 RGB / depth 回退，不再在初始 RGB-D 路径上无限递归
-- 新增 `scripts/demo_robocasa_reach_onscreen.py`，提供底层 RoboCasa/robosuite 的 onscreen 自动 reach 入口：脚本会同时打开实时 viewer 与 offscreen 相机观测，用运行时 RGB-D 做 candidate 生成，并在窗口里执行可选轴标定和 `hover -> settle` reach，便于直接录屏或人工观察真实机械臂运动
-- `requirements.txt` 现合并为统一安装入口，覆盖当前 robosuite、RoboCasa vision 与 RL smoke 路径；该入口采用 RoboCasa/RL 的 `numpy 2.2.5` / `torch 2.7.1` / `torchvision 0.22.1` 基线，并显式安装 `third_party/robosuite` 与 `third_party/robocasa`，不再兼容 `mink 0.0.5` 的 `numpy<2.0.0` 约束
-- 统一依赖入口里的 OpenCV 版本已从 `opencv-python==4.8.0.76` 升到 `4.11.0.86`，用于修复 Windows + Python 3.10 下 `numpy 2.2.5` 环境里的 ABI 兼容问题；此前按新 `requirements.txt` 重建 `robotic-robocasa-rl` 环境时，`cv2` 导入会触发 `_ARRAY_API not found` / `numpy.core.multiarray failed to import`，本轮已按支持 NumPy 2 的 OpenCV 版本线修正
-- 新增 `scripts/checkVision.py` 诊断入口，复用 `demo_vision_grasp.py` 的 robosuite 视觉抓取链路，并并排输出 `vision target / selected candidate / final_grasp_pos / GT object center & top surface / planned waypoints / executed EEF pose`，用于区分“抓取点 z 本身偏高”和“执行阶段没有真正下探到 planned grasp z”这两类问题
-- `scripts/checkVision.py` 现支持 `--scenario cube|can|milk|bread|cereal|all`，可像 `demo_vision_grasp.py` 一样按单场景检查，也可一键汇总全部 robosuite 基线场景的 vision / GT / execution 对比结果
-- `scripts/checkVision.py` 现支持 `--summary`（JSON 摘要）与 `--summary-table`（文本表格摘要），便于快速横向比较各场景的 `candidate_z_minus_gt_top_surface`、`eef_before_close_z_minus_planned_grasp_z`、`grasp_verified` 等关键诊断字段
-- `scripts/checkVision.py` 的表格摘要现额外展示每个场景的 `gt_xyz`（GT 目标中心坐标）与 `vision_xyz`（视觉 target 坐标），便于直接对照各场景的三维坐标偏差而不必回看完整 JSON
-- 新增 `scripts/demo_GT_grasp.py`，保持与 `scripts/demo_vision_grasp.py` 相同的 `--scenario cube|can|milk|bread|cereal` / `--render` / `--place-test` 入口形式，但将抓取目标来源替换为 robosuite GT 坐标，用于和 vision-driven demo 做一对一执行对照
-- 新增 `scripts/grasp_demo_common.py` 共享 GT object summary / GT grasp target helper，供 `checkVision.py` 与 `demo_GT_grasp.py` 共同复用，避免 demo 脚本反向依赖诊断脚本的私有 helper
-- 单臂抓取阶段现使用比通用 waypoint 更严格的 `GRASP_SUCCESS_TOLERANCE`，用于避免 close 前在 `planned_grasp` 上方约 2.5cm 提前判定“到位”；同时 `demo_vision_grasp.py` / `demo_GT_grasp.py` 现会先 `render()` 再执行 `home_arms()`，以减少 cube/Lift 双臂收尾阶段对 render 路径的干扰
-- 单臂 `compute_grasp_waypoints()` 现显式引入 `SINGLE_GRASP_CONTACT_Z_OFFSET = 0.025`，把 `robot0_eef_pos` 这类 EEF/TCP 参考点与真实夹爪接触面分开；这是针对 `checkVision.py` 中 close 前高度稳定高于 `planned_grasp.z` 约 2.5cm 的执行侧补偿修正
-- `scripts/demo_vision_grasp.py` 的 `cube` 场景现改回与脚本实际执行方式一致的单臂 `Lift` 配置（`robots="Panda"`, `env_configuration="default"`），避免继续在“双臂环境里的单臂抓取”上做无效诊断并干扰 `render` / `home_arms()` 行为判断
-- 当前 robosuite 诊断链新增三类实用入口：
-  - `scripts/checkVision.py`：并排输出 `vision target / GT center / planned grasp / execution` 的诊断入口，支持 `--scenario`、`--summary`、`--summary-table`
-  - `scripts/demo_GT_grasp.py`：与 `scripts/demo_vision_grasp.py` 保持近似 CLI 结构，但直接使用 GT 坐标执行抓取，用于和 vision demo 做一对一对照
-  - `scripts/grasp_demo_common.py`：抽出的共享 GT helper，统一 `cube / can / milk / bread / cereal` 的 GT object summary 与 GT grasp target 解析逻辑
-- 本轮针对单臂抓取执行侧已形成两个阶段性结论：
-  - `robot0_eef_pos` 更像 EEF/TCP 参考点，而不是真实指尖接触面；`SINGLE_GRASP_CONTACT_Z_OFFSET = 0.028` 更适合被理解为“参考点到接触面”的几何补偿，而不是所有对象通用的“抓取误差常数”
-  - `cube` 在修正为单臂 `Lift` 并加入接触补偿后，`checkVision.py --scenario cube` 与 `demo_GT_grasp.py --scenario cube` 已能成功抓起物体；当前 `demo_vision_grasp.py --scenario cube --render` 的主要剩余问题已转向 vision 大框误检 / candidate 几何失真，而不再是执行层下探不到位
-- 文档口径说明：`docs/getting-started.md` 仍然是项目级环境策略说明；`LHYstart.md` 只记录本轮在当前机器上实际使用过的诊断/演示命令，便于快速复现，不替代正式环境文档
-- 旧的 `requirements-robocasa-rl.txt` 已删除，`environment-robocasa-rl.yml`、setup 指引和依赖测试都改为引用统一的 `requirements.txt`
-- `scripts/setup/check_robocasa_rl_deps.py` 现改为读取包元数据版本，不再通过真实 import `robosuite` / `robocasa` 做依赖 smoke，避免检查阶段被仿真初始化卡住
-- 清理了本轮试错中确认无效的离屏录像脚本与产物：`scripts/record_robocasa_motion.py`、`scripts/record_robocasa_reach.py` 以及 `outputs/vision/` 下对应 mp4 / reach 调试文件已删除，避免继续误用一条已知会在 `env.step()` 后冻结或黑屏的录像路径
-- `third_party/robocasa/robocasa/utils/env_utils.py` 现允许外部覆盖 `use_camera_obs` / `camera_depths`，不再在 `create_env(...)` 内部写死 `camera_depths=False`，为 RoboCasa RGB-D 视觉链打通做准备
+### control/execution
 
-## 三、当前主要问题
+- 已完成：从 `scripts/demo_robocasa_reach_onscreen.py` 抽出执行 helpers 到 `arm/robocasa_execution.py`。
+- 已完成：抽出轴向标定到 `arm/calibration.py`，抽出 top-down reach / close / lift 到 `arm/robocasa_primitives.py`。
+- 已完成：抽出 handle / oblique 实验执行到 `arm/handle_experiments.py`，并通过 `--handle-mode` 显式启用。
+- 已完成：新增 `arm/action_space_diagnostics.py`，demo 支持 `--diagnose-action-space` 扫描 action index 对 EEF / gripper 的影响。
+- 已完成：新增 `arm/reachability.py`，demo 输出 `reachability_diagnosis`，用于区分 near-success、position saturation、orientation saturation、gripper width risk。
+- 已完成：新增实验性 `arm/base_torso.py`，demo 支持 `--enable-base-torso-preposition` 在 arm reach 前执行 base 预定位；默认关闭，torso 默认禁用，避免污染稳定 top-down baseline。
+- 已完成：base 预定位已参数化，demo 支持 `--base-desired-xy-standoff`、`--base-xy-deadband`、`--base-preposition-gain`、`--base-action-limit`，便于强制触发和验证 base movement。
+- 已完成：新增 `--auto-preposition-retry`，top-down 首次 reach 失败且诊断显示 position saturation 或 final error 过大时，会执行一次 base preposition 并 retry reach。
+- 已完成：新增 base 专用 action mapping 标定，demo 支持 `--calibrate-base-action-mapping` 输出 base action 到 EEF/Base XY 的实测映射，支持 `--use-base-action-mapping` 让预定位用该映射反解 base action。
+- 已完成：`scripts/demo_robocasa_reach_onscreen.py` 在 base 预定位发生有效移动后默认刷新 vision candidate；仅调试时可用 `--skip-vision-refresh-after-base-preposition` 保留旧 candidate。
+- 已完成：handle side / oblique 路径明确为 reach-only 验证，不进入 close/lift；默认允许继续到 contact approach，用于展示 handle reachability / 姿态控制局限性。
+- 已完成：新增 `handle_top_down` 实验路径，执行时在 hover 后先对齐 candidate orientation，再下探 close/lift；普通 `top_down` 执行保持不对齐姿态，避免污染稳定杯口 baseline。
+- 已修复：`handle_top_down` 的动态把手方向现在按 Panda 夹爪实际闭合轴（EEF Y 轴）对齐；此前 perception 已输出随把手变化的 `closing_axis`，但 execution/debug 按 EEF X 轴解释，导致视觉上像每次重启都是同一方向。
+- 已撤销：handle base 预定位目标改为 pre-approach target 的实验；该改动导致模型卡在预靠近阶段。当前 base preposition 已恢复为对齐 selected candidate 本身。
 
-### 1. `main.py` 仍然偏重
+### logic/fsm
 
-虽然根目录和支撑目录已经明显更干净，但 [main.py](/D:/Code/MyRepositories/robotic-final-proj/main.py) 仍然承担了较重的 orchestration 责任，还不是一个足够薄的主入口。第三档候选选择、抓取执行与日志聚合仍有较多 glue logic 留在这里。
+- 已完成：demo 的 candidate 策略从脚本迁移到 `planner/candidates.py`。
+- 当前策略：`--handle-mode off` 为默认，handle candidate 会回退到稳定 top-down；`anchor_top_down`、`oblique_reach`、`side_reach` 为显式实验模式；`--grasp-type handle_top_down` 可显式选择从上方抓把手。
+- 保持不变：正式 FSM 状态迁移和 `detected_objects` 消费协议未在本轮改动。
 
-### 2. 第三档候选几何仍是占位实现
+### integration/merge
 
-当前 `grasp_candidates` 已经贯穿 schema、FSM、execution path、run log 和 RL selector interface，并且两条主候选路径都已摆脱占位实现：`top_down` 与 `cup/mug` 的 `handle_grasp` 都已经具备第一版几何启发式的位姿、夹爪宽度和候选评分。但候选几何仍然不是最终版本：它还缺少更强的多策略候选生成、真实可达性先验，以及比当前启发式更稳的局部形状建模。
+- 当前分支：`fix-execution-cleanup-baseline`。
+- 改动范围：`arm/`、`planner/`、`scripts/demo_robocasa_reach_onscreen.py`、`tests/`、`docs/task.md`。
+- 未触碰：`main.py`、正式 `fsm/` IPC 协议、`vision/detected_objects.py` schema。
 
-### 3. RoboCasa 路径仍有运行时警告
+### eval/logging
 
-`gymnasium` observation-space warning 仍未收敛。当前 smoke path 已可运行，但还没有把这类 runtime mismatch 彻底收口。
+- 本轮未新增正式 run log schema；只在 demo stdout 中加入 `action_space_diagnostics` 与 `reachability_diagnosis` JSON。
+- 用户运行证据：`CoffeeSetupMug + top_down` 曾达到 `overall_success=true`；handle / oblique 仍失败，日志显示 position / orientation action 饱和与 workspace 边界问题。
+- 用户运行证据：`CoffeeSetupMug + top_down + --enable-base-torso-preposition` 多次达到 `overall_success=true`，说明预定位开关未破坏稳定路径；最近一次输出 `effective_should_move=false`、`action_norm=0.0`、`torso_command_ignored=true`，验证了“规划想动 torso 但 torso 默认禁用，因此实际不移动”的 summary 语义。
+- 用户运行证据：激进 base 参数 `--base-desired-xy-standoff 0 --base-xy-deadband 0 --base-preposition-gain 8 --base-action-limit 0.5` 能触发 `effective_should_move=true` 与 `action_norm>0`，EEF 发生明显 XY 位移，且 top-down 仍 `overall_success=true`；但该次 `xy_distance_improved=false`，说明当前 base command 方向还需要 base 专用标定，不能复用 arm action mapping 当作 base mapping。
+- 用户运行证据：`--auto-preposition-retry` 在 top-down 首次 reach 成功时输出 `triggered=false`，符合“不干扰成功 baseline”的预期。
+- 用户运行证据：首次 `--calibrate-base-action-mapping --use-base-action-mapping` 暴露出两个问题：`action[10]` 主要影响 Z / height，不应放进 XY base slice；mapping 反解还需要按执行步数缩放，否则 30 步会严重过冲。默认 base slice 已收紧为 `7:10`。
+- 用户运行证据：`base_slice=[7,10]` 后 mapping 输出维度正确且 top-down 仍成功，但强制预定位仍出现 `xy_distance_improved=false` 与 Y 方向过冲；已新增 `--base-mapping-trust` 和 `--base-max-world-delta` 作为保守安全缩放，默认只信任 mapping 25% 且每次目标世界位移最多 3cm。
+- 用户运行证据：保守 mapping 参数 `--base-action-limit 0.2 --base-mapping-trust 0.25 --base-max-world-delta 0.03` 验证有效：`base_mapping_used=true`、`action_norm≈0.0285`、`xy_distance_before≈0.1457`、`xy_distance_after≈0.1366`、`xy_distance_improved=true`，且 top-down reach / close / lift 均成功。
+- 用户运行证据：最终路径 `CoffeeSetupMug + top_down + conservative base mapping + vision refresh` 已验证成功；输出包含 `candidate_after_base_preposition`，刷新后 candidate 从 `[3.75878, -0.56763, 0.99767]` 更新到 `[3.75812, -0.56728, 0.99768]`，`execution_summary.candidate` 使用刷新后的 candidate，`xy_distance_improved=true`，`overall_success=true`。
+- 用户运行证据：`handle_grasp + oblique_reach` 会刷新 handle candidate 且 base XY 距离改善，但接触 approach 阶段位置 action 饱和并出现 0.62m 级 position drift，机械臂晃动并打翻杯子；因此 handle reach-only 已改为默认非接触验证，只有显式 `--allow-handle-contact-approach` 才允许进入接触 approach。
+- 用户运行证据：handle 非接触安全版可避免打翻杯子，但用户接受 handle 展示中打翻杯子以体现局限性；随后 pre-approach base target 实验造成预靠近卡住，已按用户要求撤销。
+- 决策：最终演示和后续评估优先使用 top-down；handle 不再作为近期主线。
+- 下一轮如进行批量实验，应把诊断字段写入正式 eval log，而不是只依赖终端输出。
 
-### 4. 测试环境仍受 Windows 权限影响
+### infra/docs
 
-当前最典型的问题不是 contract 本身，而是：
+- 已完成：本文件压缩为当前任务看板，避免历史追加项掩盖下一步。
+- 已完成：重写前的旧版 `docs/task.md` 已保留到 `docs/archive/task-2026-05-01-pre-cleanup.md`。
+- 保留：旧详细背景可继续放入 `docs/archive/` 或独立 design plan；不要再在本看板无限追加长日志。
 
-- `multiprocessing.Queue()` 在部分测试环境下权限拒绝
-- 测试里创建 `outputs/` 目录时权限拒绝
+## 最近完成阶段
 
-这意味着仓库结构已经更整齐，但测试环境还不够干净。
+- `planner/candidates.py`：集中 candidate 选择、handle fallback、anchor top-down、oblique candidate 构造。
+- 已撤销：`handle_guided_top_down` 及其在 `arm/robocasa_primitives.py` 中引入的通用 candidate-orientation 消费；最终路线回到纯 top-down baseline。
+- `arm/robocasa_execution.py`：集中 action 构造、EEF pose / quat、夹爪宽度读取。
+- `arm/calibration.py`：集中 action mapping 标定与 base-to-world rotation 提取。
+- `arm/robocasa_primitives.py`：集中 top-down reach、close、lift，并新增 `handle_top_down` 使用的 oriented top-down reach。
+- `arm/handle_experiments.py`：集中 handle side / oblique reach-only 实验逻辑。
+- `arm/action_space_diagnostics.py`：新增 action index 扫描诊断。
+- `arm/reachability.py`：新增 reach summary 归因诊断。
+- `arm/base_torso.py`：新增 base / torso action 构造、预定位命令计算、预定位执行 helper。
+- `arm/base_torso.py`：新增 `calibrate_base_action_mapping()`，只 pulse base action slice 并估计 `eef_xy_delta_from_base_action` / `base_xy_delta_from_base_action`。
+- `scripts/demo_robocasa_reach_onscreen.py`：新增 base 预定位调试参数，并在 summary 中报告 `xy_distance_before`、`xy_distance_after`、`xy_distance_improved`。
+- `scripts/demo_robocasa_reach_onscreen.py`：base 有效移动后默认输出 `candidate_after_base_preposition`，并让后续 reach / close / lift 使用刷新后的 vision 抓取点。
+- `arm/reach_retry.py`：新增 reach 失败后是否触发 base preposition retry 的最小策略判断。
+- `arm/handle_validation.py`：新增轻量 handle reach-only 稳定性汇总，避免测试导入重型 robosuite 模块。
+- `arm/handle_phases.py`：新增轻量 handle phase 规划；已移除 handle preposition target helper。
+- `arm/handle_experiments.py`：side / oblique handle reach summary 现在带 `reach_only=true` 与 `handle_reach_validation`；默认会继续到 contact approach，`--handle-noncontact-only` / `--handle-abort-on-position-drift` 可用于安全调试。
+- `vision/perception_loop.py`：新增 `handle_top_down` candidate，使用把手点云顶部高度、垂直 outward 的 closing axis、把手厚度投影作为 gripper width。
+- `scripts/demo_robocasa_reach_onscreen.py`：`--grasp-type` 支持 `handle_top_down`，该路径走 orientation-aware top-down reach 后继续 close/lift。
+- `arm/robocasa_primitives.py` / `scripts/demo_robocasa_reach_onscreen.py`：修正 `handle_top_down` 姿态消费约定，让 candidate `closing_axis` 对齐当前 EEF Y 轴，并让 yaw debug 使用同一个闭合轴定义。
 
-### 5. `third_party/robocasa` 体积较大
+## 验证记录
 
-当前 vendored 方案换来了“单次 clone 即可工作”，但代价是仓库明显变大。后续如果要进一步优化仓库分发，还需要决定是否继续保留完整资产。
+- 已通过：`python -m unittest discover -s tests -p "test_candidate_planner.py"`。
+- 已通过：`python -m unittest discover -s tests -p "test_robocasa_execution_helpers.py"`。
+- 已通过：`python -m unittest discover -s tests -p "test_calibration_helpers.py"`。
+- 已通过：`python -m unittest discover -s tests -p "test_action_space_diagnostics.py"`。
+- 已通过：`python -m unittest discover -s tests -p "test_base_torso.py"`。
+- 已通过：`python -m unittest discover -s tests -p "test_reachability_diagnosis.py"`。
+- 已通过：`python -m unittest discover -s tests -p "test_reach_retry.py"`。
+- 已通过：`python -c "from pathlib import Path; files=['scripts/demo_robocasa_reach_onscreen.py','arm/reach_retry.py','arm/base_torso.py']; [compile(Path(f).read_text(encoding='utf-8'), f, 'exec') for f in files]; print('syntax ok')"`。
+- 已通过：`python -m unittest discover -s tests -p "test_base_torso.py"`（vision-refresh 接入后复验）。
+- 已通过：`python -m unittest discover -s tests -p "test_reach_retry.py"`（vision-refresh 接入后复验）。
+- 已通过：`python -c "from pathlib import Path; files=['scripts/demo_robocasa_reach_onscreen.py','arm/base_torso.py','arm/reach_retry.py']; [compile(Path(f).read_text(encoding='utf-8'), f, 'exec') for f in files]; print('syntax ok')"`（vision-refresh 接入后复验）。
+- 已通过：`python -c "from pathlib import Path; files=['scripts/demo_robocasa_reach_onscreen.py','arm/action_space_diagnostics.py','arm/base_torso.py','arm/reachability.py']; [compile(Path(f).read_text(encoding='utf-8'), f, 'exec') for f in files]; print('syntax ok')"`。
+- 已通过：`python -c "from pathlib import Path; files=['scripts/demo_robocasa_reach_onscreen.py','arm/robocasa_primitives.py','arm/handle_experiments.py','arm/action_space_diagnostics.py','arm/reachability.py','planner/candidates.py']; [compile(Path(f).read_text(encoding='utf-8'), f, 'exec') for f in files]; print('syntax ok')"`。
+- 已通过用户手动仿真验证：`python scripts/demo_robocasa_reach_onscreen.py --task robocasa/CoffeeSetupMug --target-label mug --grasp-type top_down --enable-base-torso-preposition --calibrate-base-action-mapping --use-base-action-mapping --base-desired-xy-standoff 0 --base-xy-deadband 0 --base-preposition-gain 1 --base-action-limit 0.2 --base-mapping-trust 0.25 --base-max-world-delta 0.03 --render-sleep-sec 0 --keep-open-sec 1`，结果 `overall_success=true`。
+- 已通过：`python -m unittest discover -s tests -p "test_handle_experiments.py"`。
+- 已通过：`python -c "from pathlib import Path; files=['arm/handle_validation.py','arm/handle_experiments.py','scripts/demo_robocasa_reach_onscreen.py']; [compile(Path(f).read_text(encoding='utf-8'), f, 'exec') for f in files]; print('syntax ok')"`。
+- 已通过：`python -m unittest discover -s tests -p "test_handle_experiments.py"`（handle 非接触 phase 复验）。
+- 已通过：`python -c "from pathlib import Path; files=['arm/handle_phases.py','arm/handle_validation.py','arm/handle_experiments.py','scripts/demo_robocasa_reach_onscreen.py']; [compile(Path(f).read_text(encoding='utf-8'), f, 'exec') for f in files]; print('syntax ok')"`。
+- 已修复：`arm/handle_experiments.py` 从 `arm/handle_phases.py` 导入 `HANDLE_STANDOFF`，解决 handle 脚本启动时报 `NameError: HANDLE_STANDOFF is not defined`；同时 abort 后不再继续后续 handle phase。
+- 已通过：`python -m unittest discover -s tests -p "test_handle_experiments.py"`（handle 默认 contact limitation demo 复验）。
+- 已通过：`python -c "from pathlib import Path; files=['arm/handle_phases.py','arm/handle_validation.py','arm/handle_experiments.py','scripts/demo_robocasa_reach_onscreen.py']; [compile(Path(f).read_text(encoding='utf-8'), f, 'exec') for f in files]; print('syntax ok')"`（handle 默认 contact limitation demo 复验）。
+- 已通过：`python -m unittest discover -s tests -p "test_candidate_planner.py"`（撤销 `handle_guided_top_down` 后复验）。
+- 已通过：`python -m unittest discover -s tests -p "test_robocasa_execution_helpers.py"`（撤销 candidate-orientation 消费后复验）。
+- 已通过：`python -m unittest discover -s tests -p "test_handle_top_down_candidate.py"`。
+- 已通过：`python -m unittest discover -s tests -p "test_robocasa_execution_helpers.py"`（新增 oriented top-down rotation helper 后复验）。
+- 已通过：`python -m unittest discover -s tests -p "test_candidate_planner.py"`。
+- 已通过：`python -c "from pathlib import Path; files=['vision/perception_loop.py','arm/robocasa_primitives.py','scripts/demo_robocasa_reach_onscreen.py','tests/test_handle_top_down_candidate.py']; [compile(Path(f).read_text(encoding='utf-8'), f, 'exec') for f in files]; print('syntax ok')"`。
+- 已通过：`python -c "from pathlib import Path; files=['arm/robocasa_primitives.py','scripts/demo_robocasa_reach_onscreen.py','tests/test_robocasa_execution_helpers.py']; [compile(Path(f).read_text(encoding='utf-8'), f, 'exec') for f in files]; print('syntax ok')"`（`handle_top_down` 闭合轴修正后语法校验）。
+- 未完成：`python -m unittest discover -s tests -p "test_robocasa_execution_helpers.py"` 在本轮被用户中断；需要后续重跑确认完整 helper 单测。
 
-## 四、当前推荐目录职责
+## 推荐下一步
 
-- `arm/`: 执行控制与环境适配
-- `fsm/`: 状态机与感知消费回合
-- `vision/`: 检测、坐标变换、感知循环
-- `rl/`: RL contract 与 harness
-- `runtime/`: bootstrap、queue、run logger
-- `scripts/`: train / eval / setup / validate 入口
-- `configs/`: 环境、训练、视觉配置
-- `docs/`: 指引、架构、状态板、归档
-- `tests/`: contract 与 harness 测试
-- `third_party/`: vendored 外部源码
-
-## 五、推荐下一步
-
-- owner group: `vision` + `execution`
-- goal: 把 RoboCasa mug 视觉候选从“可检测 / 可导出”推进到“可验证执行”
-
-### 优先级 1
-
-实际运行 `python scripts/demo_robocasa_reach_onscreen.py --task robocasa/CoffeeSetupMug --target-label mug`，验证当前机器上“视觉检测 -> candidate -> reach”能否在 onscreen viewer 里稳定展示真实机械臂运动；优先检查 reach 末端是否朝候选点逼近，以及 viewer 中运动与 `reach_summary.final_error_to_settle` 是否一致。
-
-### 优先级 2
-
-若 onscreen reach 成功，再把 RoboCasa 路径从“逼近候选点”推进到“闭合夹爪 + 抬升”两阶段 smoke，并单独记录失败是视觉偏差、控制漂移还是接触后滑脱。
-
-### 优先级 3
-
-继续收薄 [main.py](/D:/Code/MyRepositories/robotic-final-proj/main.py)，把 candidate planning、candidate execution、run log 聚合拆到更稳定的 helper / module 中，减少主入口中的 glue logic。
-
-### 优先级 4
-
-把 `rl/contracts.py` / `rl/harness.py` 的 selector interface 接到真实运行回路，明确：
-
-- selector action 如何选择 candidate
-- `clear` / `resense` fallback 如何映射到 FSM
-- 训练 / 评估时如何记录 selector 决策质量
-
-### 优先级 5
-
-清理测试环境权限问题，优先解决：
-
-- `multiprocessing.Queue()` 权限拒绝
-- 测试创建 `outputs/` 目录权限拒绝
-
-### 优先级 6
-
-在具备 GroundingDINO 缓存和 robosuite 运行环境的机器上实际运行 `python scripts/demo_vision_grasp.py --render`，确认视觉演示入口能稳定产出检测结果、抓取候选和执行结果；若失败，优先记录失败阶段是模型缓存、目标未检出、候选为空还是执行抓取失败。
-
-## 六、建议验证
-
-- `python -m unittest discover -s tests -p "test_*.py"`
-- `python -m unittest discover -s tests -p "test_protocol_contracts.py"`
-- `python -m unittest discover -s tests -p "test_rl_contracts.py"`
-- 端到端 verification slice（本轮已验证）：perception payload -> FSM candidate selection / retry -> candidate-driven single-arm target -> run log -> RL selector observation
-- `python scripts/demo_robocasa_vision.py --task robocasa/CoffeeSetupMug --execute-reach`
-- `python scripts/demo_robocasa_reach_onscreen.py --task robocasa/CoffeeSetupMug --target-label mug`
-- `python scripts/train_rl.py --config configs/rl/single_arm_robocasa_ppo.yaml --print-summary`
-- `python scripts/eval_rl.py --config configs/rl/single_arm_robocasa_ppo.yaml --print-summary`
-- `python scripts/demo_vision_grasp.py --render`
-
-## Recorder Failure Handoff (2026-04-29)
-
-- Goal of this branch of work was to produce a RoboCasa mug reach / grasp video directly from code, but that goal was not achieved.
-- Direct recorder attempts based on `sim.render(...)`, wrapper cached RGB, raw observation image keys, PNG frame export, GIF export, and local mp4/avi export all showed unstable behavior.
-- The most consistent failure pattern was: first frame looked normal, but subsequent frames turned black or near-black after the first `env.step(...)`.
-- In the failed recorder experiments, healthy panel stats could appear at stage start, but saved later frames still had mean pixel values near zero; this indicates the failure is upstream of GIF / mp4 encoding and likely tied to RoboCasa observation / render refresh behavior after stepping.
-- Additional failure mode observed on later attempts: some runs lost depth at startup (`Depth observation unavailable`), so the reach smoke could not build a 3D payload at all.
-- `scripts/demo_robocasa_reach_record.py` was removed because it represented an unverified and misleading path that repeatedly failed in practice.
-- The temporary offline `--save-trace-video` branch was also removed from `scripts/demo_robocasa_vision.py` because it was not validated end-to-end and depended on the same unstable reach / depth prerequisites.
-- Recommended handoff for the next owner:
-  - Treat RoboCasa video capture as an environment / rendering synchronization problem, not an image encoding problem.
-  - Start from the stable `scripts/demo_robocasa_vision.py` perception + reach smoke path instead of reviving the removed recorder script.
-  - Before any new video work, explicitly compare three sources before and after the first `env.step(...)`: `env.obs`, `env.get_raw_observation()`, and direct `sim.render(...)`.
-  - Verify whether depth loss and black-frame loss share the same root cause in the wrapper refresh path.
-
+- owner group: `control/execution`
+- goal: 手动验证 `handle_top_down` 的夹爪闭合方向已从切向改为 outward/radial，且下调后的接触高度能稳定夹住把手。
+- success criteria: `target_closing_dot_outward` 接近 1 或 -1，而不是接近 0；`final_closing_dot_target_closing` 绝对值接近 1；`object_gripper_contact=true` 且 lift 阶段物体 z 有上升。
+- suggested verification: 运行 `python scripts/demo_robocasa_reach_onscreen.py --task robocasa/HeatMug --target-label mug --grasp-type handle_top_down --layout 3 --keep-open-sec 1`，观察夹爪是否跨把手厚度闭合，而不是沿把手方向闭合。

@@ -21,10 +21,26 @@ ensure_runtime_paths()
 import robocasa  # noqa: F401 - import registers RoboCasa envs into robosuite.make
 import robosuite
 import robosuite.utils.camera_utils as robosuite_camera_utils
+import robosuite.utils.transform_utils as T
 from robosuite.controllers import load_composite_controller_config
 from termcolor import colored
 
+from arm.action_space_diagnostics import diagnose_action_space
+from arm.base_torso import (
+    DEFAULT_BASE_ACTION_SLICE,
+    DEFAULT_TORSO_ACTION_INDEX,
+    calibrate_base_action_mapping,
+    preposition_base_torso,
+)
+from arm.calibration import calibrate_position_action_mapping
+from arm.handle_experiments import execute_reach_handle, execute_reach_oblique_handle
+from arm.reachability import diagnose_reachability
+from arm.reach_retry import should_retry_with_preposition
+from arm.robocasa_execution import get_robot0_eef_quat
+from arm.robocasa_primitives import execute_close, execute_lift, execute_oriented_top_down_reach, execute_reach
 from vision.perception_loop import VisionPerceptionLoop
+from planner.candidates import choose_reachable_candidate
+
 
 
 def load_yaml(path):
@@ -121,140 +137,250 @@ def get_rgbd(obs, camera_name, sim):
     depth = normalize_depth(obs[depth_key][::-1].copy(), sim=sim)
     return rgb, depth
 
-
-def build_flat_reach_action(env, position_delta, gripper_close=0.0):
-    action = np.zeros(env.action_dim, dtype=np.float32)
-    # PandaOmron default composite controller layout is:
-    # [eef pos(3), eef rot(3), gripper(1), base(4), base_mode(1)]
-    action[0:3] = np.asarray(position_delta, dtype=np.float32)
-    action[6] = float(gripper_close)
-    return action
+def normalize_angle_deg(angle_deg):
+    return float((float(angle_deg) + 180.0) % 360.0 - 180.0)
 
 
-def get_robot0_eef_pos(obs):
-    if "robot0_eef_pos" not in obs:
-        raise RuntimeError(f"Observation missing robot0_eef_pos. Available keys: {sorted(obs.keys())}")
-    return np.asarray(obs["robot0_eef_pos"], dtype=float)
-
-
-def choose_candidate(payload, candidate_id=None):
-    candidates = payload.get("grasp_candidates", [])
-    if not candidates:
+def axis_yaw_deg(axis):
+    axis = np.asarray(axis, dtype=float)
+    xy = axis[:2]
+    norm = float(np.linalg.norm(xy))
+    if norm < 1e-8:
         return None
-    if candidate_id is not None:
-        for candidate in candidates:
-            if int(candidate["id"]) == int(candidate_id):
-                return candidate
-        raise ValueError(f"Candidate id {candidate_id} was not present in the payload.")
-    return max(candidates, key=lambda candidate: float(candidate.get("score", 0.0)))
+    xy = xy / norm
+    return float(np.degrees(np.arctan2(xy[1], xy[0])))
 
 
-def calibrate_position_action_mapping(env, obs, pulse_magnitude=0.01, pulse_steps=4, render_sleep_sec=0.02):
-    basis_columns = []
-    probe_logs = []
-    current_obs = obs
-    for axis_index in range(3):
-        start_pos = get_robot0_eef_pos(current_obs)
+def build_yaw_debug(obs, candidate, diagnostics):
+    current_rot = T.quat2mat(get_robot0_eef_quat(obs))
+    current_closing = np.asarray(current_rot[:, 1], dtype=float)
+    target_closing = np.asarray(candidate["orientation"][0], dtype=float)
+    current_yaw = axis_yaw_deg(current_closing)
+    target_yaw = axis_yaw_deg(target_closing)
+    yaw_error = None
+    if current_yaw is not None and target_yaw is not None:
+        yaw_error = normalize_angle_deg(target_yaw - current_yaw)
+        if abs(yaw_error) > 90.0:
+            yaw_error = normalize_angle_deg(yaw_error - np.sign(yaw_error) * 180.0)
 
-        def pulse(magnitude, steps):
-            nonlocal current_obs
-            for _ in range(int(steps)):
-                delta = np.zeros(3, dtype=np.float32)
-                delta[axis_index] = float(magnitude)
-                current_obs, _, _, _ = env.step(build_flat_reach_action(env, delta))
-                env.render()
-                if render_sleep_sec > 0.0:
-                    time.sleep(render_sleep_sec)
+    candidate_diagnostics = diagnostics.get(str(candidate.get("id")), {})
+    handle_center = candidate_diagnostics.get("handle_center") or candidate.get("source_handle_pos")
+    grasp_xy = candidate_diagnostics.get("grasp_xy")
+    outward_axis_xy = candidate_diagnostics.get("outward_axis_xy")
+    outward_axis = None if outward_axis_xy is None else np.asarray([outward_axis_xy[0], outward_axis_xy[1], 0.0], dtype=float)
+    target_dot_outward = None
+    current_dot_outward = None
+    if outward_axis is not None:
+        outward_norm = float(np.linalg.norm(outward_axis))
+        target_norm = float(np.linalg.norm(target_closing))
+        current_norm = float(np.linalg.norm(current_closing))
+        if outward_norm > 1e-8 and target_norm > 1e-8:
+            target_dot_outward = float(np.dot(target_closing, outward_axis) / (target_norm * outward_norm))
+        if outward_norm > 1e-8 and current_norm > 1e-8:
+            current_dot_outward = float(np.dot(current_closing, outward_axis) / (current_norm * outward_norm))
+    return {
+        "candidate_id": candidate.get("id"),
+        "grasp_type": candidate.get("grasp_type"),
+        "candidate_pos": candidate.get("pos"),
+        "handle_center": handle_center,
+        "grasp_xy": grasp_xy,
+        "outward_axis_xy": outward_axis_xy,
+        "target_closing_axis": target_closing.tolist(),
+        "current_closing_axis": current_closing.tolist(),
+        "current_closing_axis_source": "eef_y_axis",
+        "target_closing_dot_outward": target_dot_outward,
+        "current_closing_dot_outward": current_dot_outward,
+        "current_eef_x_axis": np.asarray(current_rot[:, 0], dtype=float).tolist(),
+        "current_eef_y_axis": np.asarray(current_rot[:, 1], dtype=float).tolist(),
+        "current_eef_z_axis": np.asarray(current_rot[:, 2], dtype=float).tolist(),
+        "target_yaw_deg": target_yaw,
+        "current_yaw_deg": current_yaw,
+        "expected_yaw_rotation_deg": yaw_error,
+        "handle_point_source": candidate_diagnostics.get("handle_point_source"),
+        "bbox_side_band": candidate_diagnostics.get("bbox_side_band"),
+        "estimated_width": candidate_diagnostics.get("estimated_width") or candidate.get("source_handle_width"),
+        "selected_width": candidate_diagnostics.get("selected_width") or candidate.get("gripper_width"),
+    }
 
-        pulse(float(pulse_magnitude), int(pulse_steps))
-        pos_after_positive = get_robot0_eef_pos(current_obs)
-        pulse(-float(pulse_magnitude), int(pulse_steps * 2))
-        pos_after_negative = get_robot0_eef_pos(current_obs)
-        pulse(float(pulse_magnitude), int(pulse_steps))
-        recovered_pos = get_robot0_eef_pos(current_obs)
 
-        world_delta = (pos_after_positive - pos_after_negative) / 2.0
-        command_delta = float(pulse_magnitude) * float(pulse_steps)
-        basis_column = world_delta / max(command_delta, 1e-8)
-        basis_columns.append(basis_column)
-        probe_logs.append(
-            {
-                "axis_index": axis_index,
-                "start_pos": start_pos.tolist(),
-                "pos_after_positive": pos_after_positive.tolist(),
-                "pos_after_negative": pos_after_negative.tolist(),
-                "recovered_pos": recovered_pos.tolist(),
-                "estimated_world_delta_per_unit_action": basis_column.tolist(),
+def _normalize_xy(vector):
+    vector = np.asarray(vector, dtype=float)[:2]
+    norm = float(np.linalg.norm(vector))
+    if norm < 1e-8:
+        return None
+    return vector / norm
+
+
+def _angle_deg_between_xy(axis_a, axis_b):
+    axis_a = _normalize_xy(axis_a)
+    axis_b = _normalize_xy(axis_b)
+    if axis_a is None or axis_b is None:
+        return None
+    dot = float(np.clip(np.dot(axis_a, axis_b), -1.0, 1.0))
+    return float(np.degrees(np.arccos(dot)))
+
+
+def _is_descendant_body(model, body_id, root_body_id):
+    current = int(body_id)
+    root_body_id = int(root_body_id)
+    while current >= 0:
+        if current == root_body_id:
+            return True
+        parent = int(model.body_parentid[current])
+        if parent == current:
+            break
+        current = parent
+    return False
+
+
+def _mesh_vertices_for_geom(sim, geom_id):
+    model = sim.model
+    data_id = int(model.geom_dataid[geom_id])
+    if data_id < 0:
+        return None
+    vert_num = int(model.mesh_vertnum[data_id])
+    if vert_num <= 0:
+        return None
+    vert_adr = int(model.mesh_vertadr[data_id])
+    local_vertices = np.asarray(model.mesh_vert[vert_adr : vert_adr + vert_num], dtype=float)
+    geom_pos = np.asarray(sim.data.geom_xpos[geom_id], dtype=float)
+    geom_rot = np.asarray(sim.data.geom_xmat[geom_id], dtype=float).reshape(3, 3)
+    return geom_pos + local_vertices @ geom_rot.T
+
+
+def _estimate_handle_from_points(points):
+    points = np.asarray(points, dtype=float)
+    if points.ndim != 2 or points.shape[0] < 16:
+        return None
+    xy = points[:, :2]
+    z = points[:, 2]
+    center_xy = np.median(xy, axis=0)
+    rel_xy = xy - center_xy
+    radial = np.linalg.norm(rel_xy, axis=1)
+    z_low = float(np.quantile(z, 0.20))
+    z_high = float(np.quantile(z, 0.95))
+    z_mask = (z >= z_low) & (z <= z_high)
+    angles = np.arctan2(rel_xy[:, 1], rel_xy[:, 0])
+    sector_count = 72
+    sector_width = 2.0 * np.pi / float(sector_count)
+    min_points = max(8, int(0.005 * points.shape[0]))
+    best_sector = None
+    for sector_idx in range(sector_count):
+        sector_center = -np.pi + (sector_idx + 0.5) * sector_width
+        angular_delta = np.arctan2(np.sin(angles - sector_center), np.cos(angles - sector_center))
+        sector_mask = z_mask & (np.abs(angular_delta) <= sector_width)
+        if np.count_nonzero(sector_mask) < min_points:
+            continue
+        sector_radial = radial[sector_mask]
+        score = float(np.quantile(sector_radial, 0.95))
+        if best_sector is None or score > best_sector["score"]:
+            best_sector = {
+                "center": float(sector_center),
+                "score": score,
+                "mask": sector_mask,
             }
-        )
-
-    mapping = np.column_stack(basis_columns)
-    return mapping, current_obs, {
-        "calibration_ok": True,
-        "pulse_magnitude": float(pulse_magnitude),
-        "pulse_steps": int(pulse_steps),
-        "world_delta_from_action": mapping.tolist(),
-        "probe_logs": probe_logs,
+    if best_sector is None:
+        return None
+    sector_radial = radial[best_sector["mask"]]
+    radial_threshold = float(np.quantile(sector_radial, 0.60))
+    handle_mask = best_sector["mask"] & (radial >= radial_threshold)
+    handle_points = points[handle_mask]
+    if handle_points.shape[0] < min_points:
+        return None
+    handle_center = np.mean(handle_points, axis=0)
+    tail_distance = np.linalg.norm(handle_points[:, :2] - center_xy, axis=1)
+    tail_points = handle_points[tail_distance >= float(np.quantile(tail_distance, 0.75))]
+    direction_center_xy = np.median(tail_points[:, :2], axis=0) if tail_points.shape[0] else handle_center[:2]
+    outward_axis_xy = _normalize_xy(direction_center_xy - center_xy)
+    if outward_axis_xy is None:
+        return None
+    return {
+        "center_xy": center_xy.tolist(),
+        "handle_center": handle_center.tolist(),
+        "outward_axis_xy": outward_axis_xy.tolist(),
+        "sector_center_deg": float(np.degrees(best_sector["center"])),
+        "sector_score": float(best_sector["score"]),
+        "handle_point_count": int(handle_points.shape[0]),
+        "point_count": int(points.shape[0]),
+        "z_low": z_low,
+        "z_high": z_high,
     }
 
 
-def execute_reach(env, obs, candidate, action_mapping, hover_offset=0.08, settle_offset=0.03, max_steps=120, position_gain=6.0, step_limit=0.03, reach_tolerance=0.04, render_sleep_sec=0.02):
-    candidate_pos = np.asarray(candidate["pos"], dtype=float)
-    hover_target = candidate_pos + np.array([0.0, 0.0, float(hover_offset)], dtype=float)
-    settle_target = candidate_pos + np.array([0.0, 0.0, float(settle_offset)], dtype=float)
+def build_sim_handle_mesh_debug(env, candidate, candidate_diagnostics, obj_name="obj"):
+    sim = getattr(env, "sim", None)
+    obj_body_id = getattr(env, "obj_body_id", None)
+    if sim is None or obj_body_id is None or obj_name not in obj_body_id:
+        return {"available": False, "reason": "missing_sim_or_obj_body"}
 
-    current_obs = obs
-    history = []
-    reached = True
-    for phase_name, phase_target in [("hover", hover_target), ("settle", settle_target)]:
-        phase_success = False
-        for step_idx in range(int(max_steps)):
-            current_pos = get_robot0_eef_pos(current_obs)
-            error = phase_target - current_pos
-            error_norm = float(np.linalg.norm(error))
-            history.append(
-                {
-                    "phase": phase_name,
-                    "step": step_idx,
-                    "eef_pos": current_pos.tolist(),
-                    "target_pos": phase_target.tolist(),
-                    "error_norm": error_norm,
-                }
-            )
-            if error_norm <= float(reach_tolerance):
-                phase_success = True
-                break
+    model = sim.model
+    root_body_id = int(obj_body_id[obj_name])
+    mesh_points = []
+    geom_names = []
+    for geom_id in range(int(model.ngeom)):
+        body_id = int(model.geom_bodyid[geom_id])
+        if not _is_descendant_body(model, body_id, root_body_id):
+            continue
+        vertices = _mesh_vertices_for_geom(sim, geom_id)
+        if vertices is None:
+            continue
+        mesh_points.append(vertices)
+        try:
+            geom_names.append(model.geom_id2name(geom_id))
+        except Exception:
+            geom_names.append(str(geom_id))
+    if not mesh_points:
+        return {"available": False, "reason": "no_object_mesh_vertices", "obj_body_id": root_body_id}
 
-            desired_world_delta = np.clip(
-                error * float(position_gain),
-                -float(step_limit),
-                float(step_limit),
-            )
-            if action_mapping is not None:
-                position_delta = np.linalg.pinv(np.asarray(action_mapping, dtype=float)) @ desired_world_delta
-                position_delta = np.clip(position_delta, -float(step_limit), float(step_limit))
-            else:
-                position_delta = desired_world_delta
-            current_obs, _, _, _ = env.step(build_flat_reach_action(env, position_delta))
-            env.render()
-            if render_sleep_sec > 0.0:
-                time.sleep(render_sleep_sec)
+    points = np.vstack(mesh_points)
+    estimate = _estimate_handle_from_points(points)
+    if estimate is None:
+        return {
+            "available": False,
+            "reason": "mesh_handle_estimate_failed",
+            "obj_body_id": root_body_id,
+            "mesh_point_count": int(points.shape[0]),
+            "geom_names": geom_names[:20],
+        }
 
-        if not phase_success:
-            reached = False
+    pc_handle_center = candidate_diagnostics.get("handle_center")
+    pc_outward = candidate_diagnostics.get("outward_axis_xy")
+    sim_handle_center = np.asarray(estimate["handle_center"], dtype=float)
+    sim_outward = np.asarray(estimate["outward_axis_xy"], dtype=float)
+    center_delta_xy = None
+    outward_dot = None
+    outward_angle_deg = None
+    if pc_handle_center is not None:
+        center_delta_xy = (
+            np.asarray(pc_handle_center, dtype=float)[:2] - sim_handle_center[:2]
+        ).tolist()
+    if pc_outward is not None:
+        pc_outward_xy = _normalize_xy(pc_outward)
+        if pc_outward_xy is not None:
+            outward_dot = float(np.dot(pc_outward_xy, sim_outward))
+            outward_angle_deg = _angle_deg_between_xy(pc_outward_xy, sim_outward)
 
-    final_pos = get_robot0_eef_pos(current_obs)
-    return current_obs, {
-        "reach_success": bool(reached),
-        "candidate_id": int(candidate["id"]),
-        "candidate_type": candidate["grasp_type"],
-        "candidate_pos": candidate_pos.tolist(),
-        "hover_target": hover_target.tolist(),
-        "settle_target": settle_target.tolist(),
-        "robot0_eef_final": final_pos.tolist(),
-        "final_error_to_settle": float(np.linalg.norm(settle_target - final_pos)),
-        "history_tail": history[-10:],
+    return {
+        "available": True,
+        "method": "compiled_mesh_outer_sector",
+        "obj_body_id": root_body_id,
+        "geom_names": geom_names[:20],
+        "sim_handle_center": estimate["handle_center"],
+        "sim_outward_axis_xy": estimate["outward_axis_xy"],
+        "sim_sector_center_deg": estimate["sector_center_deg"],
+        "sim_handle_point_count": estimate["handle_point_count"],
+        "sim_mesh_point_count": estimate["point_count"],
+        "pointcloud_handle_center": pc_handle_center,
+        "pointcloud_outward_axis_xy": pc_outward,
+        "pointcloud_minus_sim_handle_center_xy": center_delta_xy,
+        "pointcloud_sim_handle_center_distance_xy": None
+        if center_delta_xy is None
+        else float(np.linalg.norm(center_delta_xy)),
+        "pointcloud_vs_sim_outward_dot": outward_dot,
+        "pointcloud_vs_sim_outward_angle_deg": outward_angle_deg,
+        "candidate_pos": candidate.get("pos"),
     }
+
 
 
 def main():
@@ -262,6 +388,15 @@ def main():
     parser.add_argument("--task", default="robocasa/CoffeeSetupMug")
     parser.add_argument("--target-label", default="mug")
     parser.add_argument("--candidate-id", type=int, default=None)
+    parser.add_argument("--grasp-type", default="any", choices=["top_down", "handle_grasp", "handle_top_down", "any"],
+                        help="Filter candidates by grasp type (default: any)")
+    parser.add_argument("--handle-mode", default="off",
+                        choices=["off", "anchor_top_down", "oblique_reach", "side_reach"],
+                        help="Explicit experimental mode for handle candidates. Default keeps the stable top-down path.")
+    parser.add_argument("--handle-noncontact-only", action="store_true",
+                        help="Debug safety mode: stop handle reach-only before the contact approach phase.")
+    parser.add_argument("--handle-abort-on-position-drift", action="store_true",
+                        help="Debug safety mode: abort handle orientation alignment if position drift exceeds the safety threshold.")
     parser.add_argument("--camera-name", default="robot0_agentview_center")
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
@@ -269,8 +404,36 @@ def main():
     parser.add_argument("--style", type=int, default=None)
     parser.add_argument("--allow-download", action="store_true")
     parser.add_argument("--skip-axis-calibration", action="store_true")
-    parser.add_argument("--render-sleep-sec", type=float, default=0.02)
-    parser.add_argument("--keep-open-sec", type=float, default=8.0)
+    parser.add_argument("--diagnose-action-space", action="store_true",
+                        help="Probe all action indices and exit before perception/grasp execution.")
+    parser.add_argument("--diagnostic-pulse", type=float, default=0.1)
+    parser.add_argument("--diagnostic-steps", type=int, default=4)
+    parser.add_argument("--enable-base-torso-preposition", action="store_true",
+                        help="Experimental: move base/torso toward the selected candidate before arm reach.")
+    parser.add_argument("--calibrate-base-action-mapping", action="store_true",
+                        help="Probe base action indices and print a base-specific XY action mapping.")
+    parser.add_argument("--use-base-action-mapping", action="store_true",
+                        help="Use calibrated base XY mapping for preposition commands when available.")
+    parser.add_argument("--auto-preposition-retry", action="store_true",
+                        help="Retry top-down reach once after base preposition if the first reach fails.")
+    parser.add_argument("--skip-vision-refresh-after-base-preposition", action="store_true",
+                        help="Debug only: keep using the old candidate after base movement.")
+    parser.add_argument("--retry-final-error-threshold", type=float, default=0.03)
+    parser.add_argument("--base-torso-steps", type=int, default=30)
+    parser.add_argument("--base-action-start", type=int, default=DEFAULT_BASE_ACTION_SLICE[0])
+    parser.add_argument("--base-action-end", type=int, default=DEFAULT_BASE_ACTION_SLICE[1])
+    parser.add_argument("--torso-action-index", type=int, default=DEFAULT_TORSO_ACTION_INDEX,
+                        help="Optional torso action index. Default is disabled until action-space diagnostics confirms it.")
+    parser.add_argument("--base-desired-xy-standoff", type=float, default=0.18)
+    parser.add_argument("--base-xy-deadband", type=float, default=0.06)
+    parser.add_argument("--base-preposition-gain", type=float, default=4.0)
+    parser.add_argument("--base-action-limit", type=float, default=0.35)
+    parser.add_argument("--base-mapping-trust", type=float, default=0.25)
+    parser.add_argument("--base-max-world-delta", type=float, default=0.03)
+    parser.add_argument("--base-mapping-pulse", type=float, default=0.1)
+    parser.add_argument("--base-mapping-steps", type=int, default=4)
+    parser.add_argument("--render-sleep-sec", type=float, default=0.005)
+    parser.add_argument("--keep-open-sec", type=float, default=0.0)
     args = parser.parse_args()
 
     thresholds_config = load_yaml(PROJECT_ROOT / "configs" / "thresholds.yaml")
@@ -278,7 +441,7 @@ def main():
     vision_config["target_labels"] = [args.target_label]
     vision_config["obstacle_labels"] = []
     if "mug" in args.target_label.lower() or "cup" in args.target_label.lower():
-        vision_config["candidate_types"] = ["top_down", "handle_grasp"]
+        vision_config["candidate_types"] = ["top_down", "handle_top_down", "handle_grasp"]
         vision_config["handle_labels"] = ["cup", "mug", "glass cup"]
     if args.allow_download:
         vision_config["local_files_only"] = False
@@ -294,25 +457,97 @@ def main():
 
     print(colored("Initializing onscreen RoboCasa environment...", "yellow"))
     print(json.dumps(config, indent=2))
+    sys.stdout.flush()
     env = robosuite.make(**config)
+    print(colored("Environment created. Resetting...", "yellow"))
+    sys.stdout.flush()
 
     obs = env.reset()
+    print(colored("Reset done. Rendering first frame...", "yellow"))
+    sys.stdout.flush()
     env.render()
     time.sleep(max(args.render_sleep_sec, 0.05))
 
-    rgb, depth = get_rgbd(obs, camera_name=args.camera_name, sim=env.sim)
-    camera_config = resolve_camera_config(env, camera_name=args.camera_name, width=args.width, height=args.height)
-    loop = VisionPerceptionLoop(
-        vision_config=vision_config,
-        camera_config=camera_config,
-        conf_thresh=float(thresholds_config["CONF_THRESH"]),
-    )
-    payload = loop.infer_detected_objects(rgb, depth)
-    candidate = choose_candidate(payload, candidate_id=args.candidate_id)
-    if candidate is None:
-        raise RuntimeError("No grasp candidate was produced for the current scene.")
+    if args.diagnose_action_space:
+        _, diagnostic_summary = diagnose_action_space(
+            env,
+            obs,
+            pulse_magnitude=float(args.diagnostic_pulse),
+            pulse_steps=int(args.diagnostic_steps),
+            render_sleep_sec=float(args.render_sleep_sec),
+        )
+        print(json.dumps({"action_space_diagnostics": diagnostic_summary}, indent=2))
+        env.close()
+        return
 
-    print(json.dumps({"candidate": candidate, "payload_status": payload.get("status")}, indent=2))
+    grasp_type_filter = None if args.grasp_type == "any" else args.grasp_type
+
+    def infer_candidate_from_obs(obs_for_vision, reason):
+        rgb, depth = get_rgbd(obs_for_vision, camera_name=args.camera_name, sim=env.sim)
+        camera_config = resolve_camera_config(env, camera_name=args.camera_name, width=args.width, height=args.height)
+        loop = VisionPerceptionLoop(
+            vision_config=vision_config,
+            camera_config=camera_config,
+            conf_thresh=float(thresholds_config["CONF_THRESH"]),
+        )
+        payload, diagnostics = loop.infer_detected_objects_with_diagnostics(rgb, depth)
+        candidate_summaries = [
+            {
+                "id": candidate.get("id"),
+                "grasp_type": candidate.get("grasp_type"),
+                "score": candidate.get("score"),
+                "pos": candidate.get("pos"),
+                "closing_axis": candidate.get("orientation", [None])[0],
+                "approach_axis": candidate.get("orientation", [None, None, None])[2],
+            }
+            for candidate in payload.get("grasp_candidates", [])
+        ]
+        selected_candidate, selected_rejection = choose_reachable_candidate(
+            payload,
+            candidate_id=args.candidate_id,
+            grasp_type=grasp_type_filter,
+            handle_mode=args.handle_mode,
+        )
+        if selected_candidate is None:
+            raise RuntimeError(
+                "No reachable grasp candidate was produced for the current scene. "
+                f"Rejected candidate: {selected_rejection}"
+            )
+        selected_candidate_diagnostics = diagnostics.get("grasp_candidates", {}).get(
+            str(selected_candidate.get("id")),
+            {},
+        )
+        summary = {
+            "reason": reason,
+            "candidate": selected_candidate,
+            "payload_status": payload.get("status"),
+            "candidate_rejection": selected_rejection,
+            "perception_candidates": candidate_summaries,
+            "grasp_candidate_diagnostics": diagnostics.get("grasp_candidates", {}),
+            "selected_candidate_yaw_debug": build_yaw_debug(
+                obs_for_vision,
+                selected_candidate,
+                diagnostics.get("grasp_candidates", {}),
+            ),
+            "sim_handle_mesh_debug": build_sim_handle_mesh_debug(
+                env,
+                selected_candidate,
+                selected_candidate_diagnostics,
+            )
+            if selected_candidate.get("grasp_type") == "handle_top_down"
+            else None,
+        }
+        del loop, payload, rgb, depth
+        import gc
+        import torch
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        return selected_candidate, selected_rejection, summary
+
+    candidate, candidate_rejection, initial_candidate_summary = infer_candidate_from_obs(obs, reason="initial")
+
+    print(json.dumps(initial_candidate_summary, indent=2))
 
     action_mapping = None
     calibration_summary = None
@@ -325,22 +560,192 @@ def main():
         )
         print(json.dumps({"axis_calibration": calibration_summary}, indent=2))
 
-    current_obs, reach_summary = execute_reach(
-        env,
-        obs=current_obs,
-        candidate=candidate,
-        action_mapping=action_mapping,
-        render_sleep_sec=float(args.render_sleep_sec),
-    )
-    print(json.dumps({"reach_summary": reach_summary}, indent=2))
+    base_action_mapping = None
+    base_mapping_summary = None
+    if args.calibrate_base_action_mapping or args.use_base_action_mapping:
+        current_obs, base_mapping_summary = calibrate_base_action_mapping(
+            env,
+            obs=current_obs,
+            base_slice=(int(args.base_action_start), int(args.base_action_end)),
+            pulse_magnitude=float(args.base_mapping_pulse),
+            pulse_steps=int(args.base_mapping_steps),
+            render_sleep_sec=float(args.render_sleep_sec),
+        )
+        base_action_mapping = np.asarray(base_mapping_summary["eef_xy_delta_from_base_action"], dtype=float)
+        print(json.dumps({"base_action_mapping": base_mapping_summary}, indent=2))
 
-    keep_open_sec = max(float(args.keep_open_sec), 0.0)
+    def run_preposition(obs_for_preposition, reason):
+        next_obs, summary = preposition_base_torso(
+            env,
+            obs=obs_for_preposition,
+            target_pos=candidate["pos"],
+            action_mapping=action_mapping,
+            steps=int(args.base_torso_steps),
+            render_sleep_sec=float(args.render_sleep_sec),
+            base_slice=(int(args.base_action_start), int(args.base_action_end)),
+            torso_index=None if args.torso_action_index is None else int(args.torso_action_index),
+            desired_xy_standoff=float(args.base_desired_xy_standoff),
+            xy_deadband=float(args.base_xy_deadband),
+            base_gain=float(args.base_preposition_gain),
+            base_action_limit=float(args.base_action_limit),
+            base_action_mapping=base_action_mapping if args.use_base_action_mapping else None,
+            base_mapping_trust=float(args.base_mapping_trust),
+            max_base_world_delta=float(args.base_max_world_delta),
+        )
+        summary["reason"] = reason
+        return next_obs, summary
+
+    def run_reach(obs_for_reach):
+        if candidate["grasp_type"] == "handle_grasp":
+            return execute_reach_handle(
+                env,
+                obs=obs_for_reach,
+                candidate=candidate,
+                action_mapping=action_mapping,
+                render_sleep_sec=float(args.render_sleep_sec),
+                include_contact_approach=not bool(args.handle_noncontact_only),
+                abort_pos_error=0.12 if args.handle_abort_on_position_drift else None,
+            )
+        if candidate["grasp_type"] == "handle_oblique_grasp":
+            return execute_reach_oblique_handle(
+                env,
+                obs=obs_for_reach,
+                candidate=candidate,
+                action_mapping=action_mapping,
+                render_sleep_sec=float(args.render_sleep_sec),
+                include_contact_approach=not bool(args.handle_noncontact_only),
+                abort_pos_error=0.12 if args.handle_abort_on_position_drift else None,
+            )
+        if candidate["grasp_type"] == "handle_top_down":
+            return execute_oriented_top_down_reach(
+                env,
+                obs=obs_for_reach,
+                candidate=candidate,
+                action_mapping=action_mapping,
+                render_sleep_sec=float(args.render_sleep_sec),
+            )
+        return execute_reach(
+            env,
+            obs=obs_for_reach,
+            candidate=candidate,
+            action_mapping=action_mapping,
+            render_sleep_sec=float(args.render_sleep_sec),
+        )
+
+    preposition_summary = None
+    candidate_refresh_summary = None
+    retry_summary = None
+    if args.enable_base_torso_preposition:
+        candidate_before_preposition = candidate
+        current_obs, preposition_summary = run_preposition(current_obs, reason="before_first_reach")
+        print(json.dumps({"base_torso_preposition": preposition_summary}, indent=2))
+        if preposition_summary.get("effective_should_move") and not args.skip_vision_refresh_after_base_preposition:
+            candidate, candidate_rejection, candidate_refresh_summary = infer_candidate_from_obs(
+                current_obs,
+                reason="after_base_preposition",
+            )
+            candidate_refresh_summary["previous_candidate"] = candidate_before_preposition
+            print(json.dumps({"candidate_after_base_preposition": candidate_refresh_summary}, indent=2))
+
+    current_obs, reach_summary = run_reach(current_obs)
+    reachability_diagnosis = diagnose_reachability(reach_summary, candidate=candidate)
+    if args.auto_preposition_retry and should_retry_with_preposition(
+        reach_summary,
+        reachability_diagnosis,
+        candidate,
+        final_error_threshold=float(args.retry_final_error_threshold),
+    ):
+        first_reach_summary = reach_summary
+        first_diagnosis = reachability_diagnosis
+        current_obs, retry_preposition_summary = run_preposition(current_obs, reason="after_reach_failure")
+        print(json.dumps({"base_torso_preposition_retry": retry_preposition_summary}, indent=2))
+        retry_candidate_refresh_summary = None
+        if retry_preposition_summary.get("effective_should_move") and not args.skip_vision_refresh_after_base_preposition:
+            previous_candidate = candidate
+            candidate, candidate_rejection, retry_candidate_refresh_summary = infer_candidate_from_obs(
+                current_obs,
+                reason="after_retry_base_preposition",
+            )
+            retry_candidate_refresh_summary["previous_candidate"] = previous_candidate
+            print(json.dumps({"candidate_after_retry_base_preposition": retry_candidate_refresh_summary}, indent=2))
+        current_obs, reach_summary = run_reach(current_obs)
+        reachability_diagnosis = diagnose_reachability(reach_summary, candidate=candidate)
+        retry_summary = {
+            "triggered": True,
+            "first_reach": first_reach_summary,
+            "first_reachability_diagnosis": first_diagnosis,
+            "preposition": retry_preposition_summary,
+            "candidate_refresh": retry_candidate_refresh_summary,
+            "second_reach_success": bool(reach_summary.get("reach_success")),
+        }
+    elif args.auto_preposition_retry:
+        retry_summary = {"triggered": False, "reason": "retry_policy_not_matched"}
+
+    close_summary = None
+    lift_summary = None
+    failure_phase = None
+
+    if reach_summary.get("reach_only"):
+        failure_phase = None if reach_summary["reach_success"] else "reach"
+    elif not reach_summary["reach_success"]:
+        failure_phase = "reach"
+    else:
+        current_obs, close_summary = execute_close(
+            env,
+            obs=current_obs,
+            render_sleep_sec=float(args.render_sleep_sec),
+        )
+        if not close_summary["close_success"]:
+            failure_phase = "close"
+        else:
+            current_obs, lift_summary = execute_lift(
+                env,
+                obs=current_obs,
+                action_mapping=action_mapping,
+                render_sleep_sec=float(args.render_sleep_sec),
+            )
+            if not lift_summary["lift_success"]:
+                failure_phase = "lift"
+
+    execution_summary = {
+        "candidate": {
+            "id": int(candidate["id"]),
+            "grasp_type": candidate["grasp_type"],
+            "pos": candidate["pos"],
+            "score": float(candidate.get("score", 0.0)),
+            "source_handle_width": candidate.get("source_handle_width"),
+            "source_handle_candidate_id": candidate.get("source_handle_candidate_id"),
+            "source_handle_pos": candidate.get("source_handle_pos"),
+            "source_top_down_candidate_id": candidate.get("source_top_down_candidate_id"),
+        },
+        "base_torso_preposition": preposition_summary,
+        "candidate_after_base_preposition": candidate_refresh_summary,
+        "base_action_mapping": base_mapping_summary,
+        "auto_preposition_retry": retry_summary,
+        "reach": reach_summary,
+        "reachability_diagnosis": reachability_diagnosis,
+        "close": close_summary,
+        "lift": lift_summary,
+        "overall_success": failure_phase is None,
+        "failure_phase": failure_phase,
+    }
+    print(json.dumps({"execution_summary": execution_summary}, indent=2))
+
+    keep_open_sec = float(args.keep_open_sec)
     if keep_open_sec > 0.0:
-        print(colored(f"Keeping viewer open for {keep_open_sec:.1f}s", "yellow"))
+        print(colored(f"Keeping viewer open for {keep_open_sec:.1f}s — close window or Ctrl+C to exit", "yellow"))
         end_time = time.time() + keep_open_sec
         while time.time() < end_time:
             env.render()
             time.sleep(0.02)
+    else:
+        print(colored("Viewer open — close window or Ctrl+C to exit", "yellow"))
+        try:
+            while True:
+                env.render()
+                time.sleep(0.02)
+        except KeyboardInterrupt:
+            pass
 
     env.close()
 

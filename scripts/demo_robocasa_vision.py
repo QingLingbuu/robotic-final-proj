@@ -33,15 +33,21 @@ try:
 except ModuleNotFoundError:
     cv2 = None
 
+try:
+    from robosuite.utils import camera_utils as robosuite_camera_utils
+except ModuleNotFoundError:
+    robosuite_camera_utils = None
+
 
 def load_yaml(path):
     with open(path, "r", encoding="utf-8") as file_handle:
         return yaml.safe_load(file_handle)
 
 
-def summarize_payload(payload):
+def summarize_payload(payload, diagnostics=None, sim_reference=None):
     target = payload.get("target", {})
     candidates = payload.get("grasp_candidates", [])
+    candidate_diagnostics = (diagnostics or {}).get("grasp_candidates", {})
     return {
         "status": payload.get("status"),
         "target": {
@@ -57,11 +63,47 @@ def summarize_payload(payload):
                 "score": candidate["score"],
                 "gripper_width": candidate["gripper_width"],
                 "pos": candidate["pos"],
+                "orientation": candidate["orientation"],
+                "diagnostics": candidate_diagnostics.get(str(candidate["id"])),
             }
             for candidate in candidates
         ],
+        "rejected_candidate_diagnostics": {
+            candidate_id: value
+            for candidate_id, value in candidate_diagnostics.items()
+            if not any(str(candidate["id"]) == str(candidate_id) for candidate in candidates)
+        },
+        "sim_handle_reference": sim_reference,
+        "handle_calibration": build_handle_calibration_summary(payload, diagnostics, sim_reference),
         "obstacle_count": len(payload.get("obstacles", [])),
     }
+
+
+def build_handle_calibration_summary(payload, diagnostics=None, sim_reference=None):
+    if sim_reference is None or sim_reference.get("pos") is None:
+        return None
+    reference_pos = np.asarray(sim_reference["pos"], dtype=float)
+    results = []
+    candidate_diagnostics = (diagnostics or {}).get("grasp_candidates", {})
+    for candidate in payload.get("grasp_candidates", []):
+        if "handle" not in str(candidate.get("grasp_type", "")):
+            continue
+        candidate_pos = np.asarray(candidate["pos"], dtype=float)
+        delta = candidate_pos - reference_pos
+        results.append(
+            {
+                "candidate_id": int(candidate["id"]),
+                "grasp_type": candidate["grasp_type"],
+                "candidate_pos": candidate_pos.tolist(),
+                "reference_pos": reference_pos.tolist(),
+                "delta_xyz": delta.tolist(),
+                "delta_xy_norm": float(np.linalg.norm(delta[:2])),
+                "delta_z": float(delta[2]),
+                "orientation": candidate["orientation"],
+                "diagnostics": candidate_diagnostics.get(str(candidate["id"])),
+            }
+        )
+    return results
 
 
 def _safe_stem(value):
@@ -72,6 +114,106 @@ def _to_json_ready(value):
     if hasattr(value, "tolist"):
         return value.tolist()
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def _model_names(model, kind):
+    names = getattr(model, f"{kind}_names", None)
+    if names is not None:
+        return list(names)
+    count = int(getattr(model, f"n{kind}", 0))
+    name_fn = getattr(model, f"{kind}_id2name", None)
+    if name_fn is None:
+        return []
+    return [name_fn(index) for index in range(count)]
+
+
+def _named_positions(model, data, kind, keywords):
+    positions = []
+    names = _model_names(model, kind)
+    array = getattr(data, f"{kind}_xpos", None)
+    if array is None:
+        return positions
+    for item_id, name in enumerate(names):
+        if name is None:
+            continue
+        lowered = str(name).lower()
+        if not any(keyword in lowered for keyword in keywords):
+            continue
+        if item_id >= len(array):
+            continue
+        positions.append(
+            {
+                "kind": kind,
+                "id": int(item_id),
+                "name": str(name),
+                "pos": [float(value) for value in np.asarray(array[item_id], dtype=float).tolist()],
+            }
+        )
+    return positions
+
+
+def build_sim_handle_reference(env, target_label="mug", target_pos=None, max_distance=0.35):
+    sim = getattr(env, "get_sim", lambda: None)()
+    if sim is None:
+        return {"available": False, "reason": "sim_unavailable"}
+    model = getattr(sim, "model", None)
+    data = getattr(sim, "data", None)
+    if model is None or data is None:
+        return {"available": False, "reason": "model_or_data_unavailable"}
+
+    label = str(target_label).lower()
+    keywords = ["handle"]
+    excluded_handle_keywords = ["cabinet", "door", "stack", "drawer", "hinge"]
+    object_keywords = [label, "mug", "cup", "object"]
+    handle_matches = []
+    for kind in ("site", "geom", "body"):
+        handle_matches.extend(
+            match
+            for match in _named_positions(model, data, kind, keywords)
+            if not any(excluded in match["name"].lower() for excluded in excluded_handle_keywords)
+        )
+    object_matches = []
+    for kind in ("site", "geom", "body"):
+        object_matches.extend(_named_positions(model, data, kind, object_keywords))
+
+    target_array = None if target_pos is None else np.asarray(target_pos, dtype=float)
+    nearby_handle_matches = []
+    if target_array is not None and target_array.shape == (3,):
+        for match in handle_matches:
+            match_copy = dict(match)
+            distance = float(np.linalg.norm(np.asarray(match_copy["pos"], dtype=float) - target_array))
+            match_copy["distance_to_target"] = distance
+            if distance <= float(max_distance):
+                nearby_handle_matches.append(match_copy)
+        nearby_handle_matches.sort(key=lambda item: float(item["distance_to_target"]))
+
+    if nearby_handle_matches:
+        reference = dict(nearby_handle_matches[0])
+        reference["available"] = True
+        reference["source"] = "nearby_named_handle"
+        reference["handle_matches"] = [dict(match) for match in nearby_handle_matches[:12]]
+        reference["object_matches"] = [dict(match) for match in object_matches[:12]]
+        return reference
+
+    return {
+        "available": False,
+        "reason": "no_named_handle_near_target",
+        "target_pos": None if target_array is None else target_array.tolist(),
+        "max_distance": float(max_distance),
+        "nearest_named_handles": sorted(
+            [
+                {
+                    **dict(match),
+                    "distance_to_target": None
+                    if target_array is None
+                    else float(np.linalg.norm(np.asarray(match["pos"], dtype=float) - target_array)),
+                }
+                for match in handle_matches
+            ],
+            key=lambda item: float("inf") if item["distance_to_target"] is None else item["distance_to_target"],
+        )[:12],
+        "object_matches": object_matches[:24],
+    }
 
 
 def build_run_stem(task_name):
@@ -118,6 +260,8 @@ def _normalize_depth_array(depth):
 
 def _resolve_initial_rgbd(env):
     rgb, depth, proprio = env.get_observation()
+    if rgb is not None and depth is None:
+        depth = render_depth_from_active_camera(env)
     if rgb is not None and depth is not None:
         return rgb, depth, proprio
 
@@ -173,7 +317,31 @@ def _resolve_initial_rgbd(env):
                 env.active_depth_key = key
                 break
 
+    if depth is None:
+        depth = render_depth_from_active_camera(env)
+
     return rgb, depth, proprio
+
+
+def render_depth_from_active_camera(env):
+    sim = getattr(env, "get_sim", lambda: None)()
+    camera_name = getattr(env, "active_camera_name", None) or getattr(env, "camera_name", None)
+    if sim is None or camera_name is None:
+        return None
+    try:
+        _, depth = sim.render(
+            camera_name=str(camera_name),
+            height=int(getattr(env, "camera_height", 480)),
+            width=int(getattr(env, "camera_width", 640)),
+            depth=True,
+        )
+    except Exception:
+        return None
+    depth = np.asarray(depth[::-1], dtype=float)
+    if robosuite_camera_utils is not None and np.all(depth >= 0.0) and np.all(depth <= 1.0):
+        depth = robosuite_camera_utils.get_real_depth_map(sim=sim, depth_map=depth)
+    env.active_depth_key = f"sim.render:{camera_name}:depth"
+    return depth
 
 
 def create_frame_sink(save_dir, run_stem, save_video=False, video_path=None, save_frames=False, save_gif=False):
@@ -335,7 +503,7 @@ def finalize_frame_sink(frame_sink):
         frame_sink["gif_path"] = gif_path
 
 
-def save_visualization(save_dir, task_name, rgb, raw_detections, payload=None):
+def save_visualization(save_dir, task_name, rgb, raw_detections, payload=None, diagnostics=None, sim_reference=None):
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
     run_stem = build_run_stem(task_name)
@@ -379,6 +547,17 @@ def save_visualization(save_dir, task_name, rgb, raw_detections, payload=None):
                 "  pos="
                 f"({float(candidate_pos[0]):.3f}, {float(candidate_pos[1]):.3f}, {float(candidate_pos[2]):.3f})"
             )
+        if sim_reference is not None and sim_reference.get("pos") is not None:
+            reference_pos = sim_reference["pos"]
+            summary_lines.append(
+                "sim_handle="
+                f"({float(reference_pos[0]):.3f}, {float(reference_pos[1]):.3f}, {float(reference_pos[2]):.3f})"
+            )
+        calibration = build_handle_calibration_summary(payload, diagnostics, sim_reference)
+        for item in calibration or []:
+            summary_lines.append(
+                f"cand{item['candidate_id']} dxy={float(item['delta_xy_norm']):.3f} dz={float(item['delta_z']):+.3f}"
+            )
 
     text_y = 8.0
     for line in summary_lines:
@@ -400,6 +579,11 @@ def save_visualization(save_dir, task_name, rgb, raw_detections, payload=None):
                     for detection in raw_detections
                 ],
                 "payload": payload,
+                "diagnostics": diagnostics,
+                "sim_handle_reference": sim_reference,
+                "handle_calibration": None
+                if payload is None
+                else build_handle_calibration_summary(payload, diagnostics, sim_reference),
             },
             file_handle,
             indent=2,
@@ -737,7 +921,7 @@ def main():
     vision_config["target_labels"] = [args.target_label]
     vision_config["obstacle_labels"] = []
     if "mug" in args.target_label.lower() or "cup" in args.target_label.lower():
-        vision_config["candidate_types"] = ["top_down", "handle_grasp"]
+        vision_config["candidate_types"] = ["top_down", "handle_grasp", "handle_top_down"]
         vision_config["handle_labels"] = ["cup", "mug", "glass cup"]
     if args.allow_download:
         vision_config["local_files_only"] = False
@@ -749,7 +933,7 @@ def main():
     env = RobocasaEnvWrapper(config=build_task_config(args.task), camera_config=static_camera_config)
 
     print(f"Stage 2/{total_stages}: fetch camera observation")
-    rgb, depth, proprio = env.get_observation()
+    rgb, depth, proprio = _resolve_initial_rgbd(env)
     if rgb is None:
         raw_obs = env.get_raw_observation()
         obs_keys = sorted(raw_obs.keys()) if isinstance(raw_obs, dict) else None
@@ -824,11 +1008,18 @@ def main():
 
     print(f"Stage 4/{total_stages}: build detection payload")
     payload = None
+    diagnostics = None
+    sim_reference = None
     if depth is None:
         print("Depth observation unavailable; skipping 3D payload construction.")
     else:
-        payload = loop.infer_detected_objects(rgb, depth)
-        print(json.dumps(summarize_payload(payload), indent=2))
+        payload, diagnostics = loop.infer_detected_objects_with_diagnostics(rgb, depth)
+        sim_reference = build_sim_handle_reference(
+            env,
+            target_label=args.target_label,
+            target_pos=payload.get("target", {}).get("pos"),
+        )
+        print(json.dumps(summarize_payload(payload, diagnostics, sim_reference), indent=2))
 
     print(f"Stage 5/{total_stages}: save visualization artifacts")
     run_stem, image_path, json_path = save_visualization(
@@ -837,6 +1028,8 @@ def main():
         rgb=rgb,
         raw_detections=raw_detections,
         payload=payload,
+        diagnostics=diagnostics,
+        sim_reference=sim_reference,
     )
     frame_sink = None
     video_path = None
