@@ -1,0 +1,39 @@
+task: robocasa/CupMugSortingClean
+scene_id: cup_mug_sorting_clean_left_sink_layout001
+fixed_layout:
+  layout_id: 1
+  style_id: 1
+  seed: optional
+  reason: layout001 has the sink on the left side of the main counter; CupMugSortingClean binds object placement to the counter referenced by that sink. Style is fixed for stable onscreen appearance, while seed is left unset by default so cup/mug instances and reset sampling can vary.
+object_count:
+  mugs: 1
+  cups: 1
+plain_cup_object_scale:
+  - 0.75
+  - 0.75
+  - 1.0
+plain_cup_max_size:
+  xy_meters: 0.072
+  reason: Panda top-down gripper opening is about 0.08m, so plain cups must be smaller than the fully-open gripper.
+placement:
+  mug_pos:
+    - -0.16
+    - -0.82
+  cup_pos:
+    - 0.18
+    - -0.82
+  intent: Keep one mug and one cup in a clean front row with enough spacing for visibility and single-arm validation.
+labels:
+  - mug
+  - cup
+  - glass cup
+sorting:
+  handled_zone: sink
+  plain_zone: opposite_counter
+  handled_strategy: handle_top_down
+  plain_strategy: top_down
+  handled_arm: right
+  plain_arm: left
+verification:
+  cup_command: python scripts/demo_robocasa_reach_onscreen.py --task robocasa/CupMugSortingClean --target-label cup --grasp-type top_down --layout 1 --keep-open-sec 5
+  mug_command: python scripts/demo_robocasa_reach_onscreen.py --task robocasa/CupMugSortingClean --target-label mug --grasp-type handle_top_down --layout 1 --keep-open-sec 5
