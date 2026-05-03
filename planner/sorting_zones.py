@@ -47,7 +47,26 @@ def _clamp(value, low, high):
     return max(float(low), min(float(high), float(value)))
 
 
-def _nearest_sink_target(sink_anchor, source_pos, place_z):
+def _suffix_index(name):
+    if not name:
+        return None
+    parts = str(name).rsplit("_", 1)
+    if len(parts) != 2:
+        return None
+    try:
+        return int(parts[1])
+    except ValueError:
+        return None
+
+
+def _category_y_offset(name, step_size=0.1):
+    index = _suffix_index(name)
+    if index is None:
+        return 0.0
+    return float(index - 1) * float(step_size)
+
+
+def _nearest_sink_target(sink_anchor, source_pos, place_z, basin_sign=None, basin_y_offset=0.0):
     sink_pos = _fixture_pos(sink_anchor)
     if sink_pos is None:
         return None
@@ -56,11 +75,13 @@ def _nearest_sink_target(sink_anchor, source_pos, place_z):
     sink_depth = float(sink_anchor.get("depth") or sink_anchor.get("size", [0.5, 0.4, 0.2])[1])
     local_source = _local_offset(sink_anchor, source_pos) or [0.0, 0.0, 0.0]
 
-    # For double-basin sinks, choose the basin center on the side nearest the
-    # current object. For single-basin sinks this still lands safely inside.
-    basin_sign = -1.0 if local_source[0] < 0.0 else 1.0
+    # For double-basin sinks, choose an explicit basin side when requested.
+    # Fallback to the side nearest the current object when no preference exists.
+    if basin_sign is None:
+        basin_sign = -1.0 if local_source[0] < 0.0 else 1.0
+    basin_sign = -1.0 if float(basin_sign) < 0.0 else 1.0
     target_local_x = basin_sign * sink_width * 0.22
-    target_local_y = _clamp(local_source[1], -sink_depth * 0.20, sink_depth * 0.20)
+    target_local_y = _clamp(local_source[1] + float(basin_y_offset), -sink_depth * 0.20, sink_depth * 0.20)
     target = _world_offset(
         sink_anchor,
         [target_local_x, target_local_y, float(place_z) - sink_pos[2]],
@@ -88,14 +109,26 @@ def choose_cup_mug_place_target(assignment, sim_objects, zone_margin=0.10, place
     counter_anchor = anchors.get("counter")
 
     if is_handled and sink_anchor:
-        sink_target = _nearest_sink_target(sink_anchor, assignment.get("pos"), place_z)
+        assignment_name = str(assignment.get("sim_object_name") or "")
+        basin_y_offset = 0.0
+        if assignment_name.endswith("_1"):
+            basin_y_offset = -0.04
+        elif assignment_name.endswith("_2"):
+            basin_y_offset = 0.04
+        sink_target = _nearest_sink_target(
+            sink_anchor,
+            assignment.get("pos"),
+            place_z,
+            basin_sign=1.0,
+            basin_y_offset=basin_y_offset,
+        )
         if sink_target is not None:
             return {
                 "zone": "sink",
                 "target_pos": sink_target,
                 "source_assignment": assignment,
                 "anchor": "sink",
-                "placement_rule": "nearest_sink_basin",
+                "placement_rule": "spaced_sink_basin",
             }
 
     if (not is_handled) and counter_anchor:
@@ -107,16 +140,23 @@ def choose_cup_mug_place_target(assignment, sim_objects, zone_margin=0.10, place
             side_sign = 1.0
             if sink_pos is not None and sink_pos[0] > counter_pos[0]:
                 side_sign = -1.0
+            assignment_name = str(assignment.get("sim_object_name") or "")
+            counter_y_offset = _category_y_offset(assignment_name, step_size=0.1)
             target = _world_offset(
                 counter_anchor,
-                [side_sign * counter_width * 0.44, -counter_depth * 0.42, place_z - counter_pos[2]],
+                [
+                    side_sign * counter_width * 0.44,
+                    _clamp(-counter_depth * 0.42 + counter_y_offset, -counter_depth * 0.42, counter_depth * 0.25),
+                    place_z - counter_pos[2],
+                ],
             )
             if target is not None:
                 return {
-                    "zone": "opposite_counter",
+                    "zone": "right_counter",
                     "target_pos": [float(target[0]), float(target[1]), float(target[2])],
                     "source_assignment": assignment,
                     "anchor": "counter",
+                    "placement_rule": "spread_counter_edge",
                 }
 
     zone = "handled" if is_handled else "plain"

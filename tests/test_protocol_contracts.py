@@ -13,6 +13,7 @@ from runtime.perception_queue import (
     read_detected_objects,
 )
 from runtime.run_logger import build_run_log, infer_failure_mode, infer_failure_modes_triggered
+from rl.cup_mug_metrics import build_rl_ordering_run_payload
 from fsm.perception_cycle import consume_perception_queue
 from vision.detected_objects import MAX_OBSTACLES, build_detected_objects, validate_detected_objects
 from vision.detector import Detection
@@ -102,7 +103,7 @@ class DetectedObjectsContractTests(unittest.TestCase):
 
 
 class VisionPerceptionContractTests(unittest.TestCase):
-    def test_infer_detected_objects_adds_handle_grasp_for_cup_like_target(self):
+    def test_infer_detected_objects_uses_active_cup_like_candidate_types(self):
         class _Detector:
             def detect(self, rgb_image, labels):
                 return [Detection(label="cup", score=0.95, box_xyxy=[0.0, 0.0, 4.0, 4.0])]
@@ -112,7 +113,7 @@ class VisionPerceptionContractTests(unittest.TestCase):
                 vision_config={
                     "target_labels": ["cup"],
                     "obstacle_labels": [],
-                    "candidate_types": ["top_down", "handle_grasp"],
+                    "candidate_types": ["top_down", "handle_top_down"],
                     "depth_sample_radius": 0,
                     "max_obstacles": MAX_OBSTACLES,
                     "default_gripper_width": 0.04,
@@ -154,12 +155,10 @@ class VisionPerceptionContractTests(unittest.TestCase):
 
         grasp_types = [candidate["grasp_type"] for candidate in payload["grasp_candidates"]]
         self.assertIn("top_down", grasp_types)
-        self.assertIn("handle_grasp", grasp_types)
-        handle_candidate = next(candidate for candidate in payload["grasp_candidates"] if candidate["grasp_type"] == "handle_grasp")
-        self.assertGreater(handle_candidate["pos"][0], payload["target"]["pos"][0])
-        self.assertGreater(handle_candidate["gripper_width"], 0.1)
-        self.assertLess(handle_candidate["orientation"][2][0], -0.7)
-        self.assertGreater(abs(handle_candidate["orientation"][1][2]), 0.7)
+        self.assertNotIn("handle_grasp", grasp_types)
+        top_down_candidate = next(candidate for candidate in payload["grasp_candidates"] if candidate["grasp_type"] == "top_down")
+        self.assertGreaterEqual(top_down_candidate["gripper_width"], 0.075)
+        self.assertAlmostEqual(top_down_candidate["orientation"][2][2], -1.0, places=6)
 
     def test_handle_grasp_score_increases_with_stronger_protrusion(self):
         loop = VisionPerceptionLoop.__new__(VisionPerceptionLoop)
@@ -572,6 +571,35 @@ class RunLogContractTests(unittest.TestCase):
             execution_summary={"grasp_failure_mode": "physical_slip"},
         )
         self.assertEqual(modes, ["perception_error", "execution_drift", "physical_slip"])
+
+    def test_build_run_log_accepts_nested_rl_ordering_payload(self):
+        extra_payload = build_rl_ordering_run_payload(
+            {
+                "policy": "greedy",
+                "episodes": 2,
+                "success_rate": 0.5,
+                "completed_count_mean": 2.0,
+                "invalid_action_count": 1,
+                "failure_counts": {"invalid_action": 1},
+                "selected_orders": [[0, 1], [2, 3]],
+                "reward_breakdown": {"invalid_action": -3.0},
+                "max_targets": 5,
+            }
+        )
+        run_log = build_run_log(
+            run_id="run-004",
+            config_version="v1",
+            scene_config={"seed": 3, "object_count": 5, "scene_id": "scene-04"},
+            success=False,
+            counts={"n1": 0, "n2": 0, "n3": 0},
+            duration_sec=3.5,
+            context="rl-ordering",
+            extra_payload=extra_payload,
+        )
+
+        self.assertIn("rl_ordering", run_log)
+        self.assertEqual(run_log["rl_ordering"]["policy"], "greedy")
+        self.assertEqual(run_log["rl_ordering"]["max_targets"], 5)
 
 
 if __name__ == "__main__":

@@ -1,9 +1,9 @@
 # RL Cup Ordering Strategy for RoboCasa Tabletop Tidying
 
 ## TL;DR
-> **Summary**: Add a high-level RL object-ordering layer that only chooses the next cup to process in a multi-cup RoboCasa tidying episode. Low-level grasp candidate selection, arm control, DINO perception, IPC, FSM retry handling, and placement execution remain deterministic/current-system responsibilities.
+> **Summary**: Add a high-level RL object-ordering layer that only chooses the next drinkware target to process in a multi-object RoboCasa tidying episode. Low-level grasp candidate selection, arm control, DINO perception, IPC, FSM retry handling, and placement execution remain deterministic/current-system responsibilities.
 > **Deliverables**:
-> - Cup-ordering RL contract with padded `MAX_CUPS=4` observation, masks, reward schema, and invalid-action behavior.
+> - Cup/mug ordering RL contract with padded `MAX_TARGETS=5` observation, masks, reward schema, and invalid-action behavior.
 > - Shared cup scene observation builder used by Random, risk-aware greedy, and RL policies.
 > - RoboCasa-compatible ordering train/eval path with low/medium/high clutter tiers.
 > - Structured logging and report outputs for 30 episodes per policy total: 10 low + 10 medium + 10 high.
@@ -17,14 +17,14 @@
 - 当前已完成 RoboCasa 环境中有把手杯子和无把手杯子的 DINO 语义分割点云 Vision 识别。
 - 当前继续做分类识别 Vision。
 - 目标是在复杂、杂乱桌面上识别两种杯子，并准确夹取、放到指定位置。
-- 最终加入 RL 学习选择策略，对比随机选择顺序，验证强化学习后的执行顺序是否更顺利、更稳定、更节省时间。
+- 最终加入 RL 学习选择策略，对比随机选择顺序，先验证强化学习接口与评估链路是否完整；Phase 1 不宣称 RL 已优于 greedy。
 
 ### Interview Summary
 - RL 只学“先处理哪个杯子”，不学习低层抓取控制、grasp candidate 选择、机械臂轨迹、collision recovery、完整任务规划。
 - 目标优先级：成功率 > 稳定性 = 耗时 > 碰撞。碰撞虽然不是主优化指标，但作为安全硬惩罚处理。
 - 每个 episode 连续整理多个杯子。
-- 场景规模：2-4 个目标杯子 + 若干杂物。
-- 所有杯子统一放到同一个指定区域。
+- 当前场景规模：5 个 drinkware 目标（2 个 mug + 3 个 cup）+ 若干杂物。
+- handled mugs 放到 sink；plain cups 放到 opposite/right counter，不再使用统一目标区域。
 - Baseline：Random + Risk-aware greedy + RL。
 - Heuristic baseline：risk-aware greedy，使用 candidate score、detection confidence、reachability、clutter/risk、distance。
 - 训练路线：直接 RoboCasa 中训练。
@@ -41,7 +41,7 @@
 
 ## Work Objectives
 ### Core Objective
-Implement and verify a high-level RoboCasa cup-ordering RL layer where `Discrete(MAX_CUPS=4)` selects the next unfinished cup to process, while existing perception, candidate generation, FSM retries, and execution perform the actual grasp/place behavior.
+Implement and verify a high-level RoboCasa cup/mug-ordering RL layer where `Discrete(MAX_TARGETS=5)` selects the next unfinished drinkware target to process, while existing perception, candidate generation, FSM retries, and execution perform the actual grasp/place behavior.
 
 ### Deliverables
 - `configs/rl/cup_ordering_robocasa.yaml` configuration for ordering RL, baselines, reward weights, clutter tiers, seeds, artifacts, and RoboCasa train/eval settings.
@@ -59,22 +59,20 @@ Implement and verify a high-level RoboCasa cup-ordering RL layer where `Discrete
 - `python -m unittest discover -s tests -p "test_protocol_contracts.py"` exits `0`.
 - `python -m unittest discover -s tests -p "test_main_contracts.py"` exits `0`.
 - `python -m unittest discover -s tests -p "test_cup_ordering_contracts.py"` exits `0` after the new ordering contract tests are added.
-- `python scripts/train_rl.py --config configs/rl/cup_ordering_robocasa.yaml --timesteps 10 --dry-run --print-summary` exits `0` and prints `max_cups=4`, `action_space=Discrete(4)`, reward component names, and ordering mode.
-- `python scripts/eval_rl.py --config configs/rl/cup_ordering_robocasa.yaml --policy random --episodes 2 --tier low --dry-run --print-summary` exits `0` and prints policy/tier/episode summary.
-- `python scripts/eval_rl.py --config configs/rl/cup_ordering_robocasa.yaml --policy greedy --episodes 2 --tier low --dry-run --print-summary` exits `0` and prints greedy score components.
-- `python scripts/eval_rl.py --config configs/rl/cup_ordering_robocasa.yaml --policy random --episodes 1 --tier low --seed 42 --timeout-sec 120 --print-summary` exits `0` or exits through a controlled structured failure path with no uncaught exception and with a run log containing `commit_hash`, `scene_config`, `policy_type`, `selected_cup_index`, and `counts`.
-- `python scripts/train_rl.py --config configs/rl/cup_ordering_robocasa.yaml --timesteps 1000 --seed 42 --timeout-sec 300 --print-summary` exits `0` or controlled timeout with structured log; it must not suppress collision or safe-retract behavior.
-- `python scripts/eval_rl.py --config configs/rl/cup_ordering_robocasa.yaml --policy random --episodes 30 --tiers low,medium,high --seed 42 --print-summary` produces 10 episodes per tier.
-- `python scripts/eval_rl.py --config configs/rl/cup_ordering_robocasa.yaml --policy greedy --episodes 30 --tiers low,medium,high --seed 42 --print-summary` produces 10 episodes per tier using the same seed schedule.
-- `python scripts/eval_rl.py --config configs/rl/cup_ordering_robocasa.yaml --policy rl --episodes 30 --tiers low,medium,high --seed 42 --print-summary` produces 10 episodes per tier using the same seed schedule.
+- `python scripts/train_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --dry-run --print-summary` exits `0` and prints `max_targets=5`, `action_space=Discrete(5)`, reward component names, and ordering mode.
+- `python scripts/eval_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy random --episodes 2 --dry-run --print-summary` exits `0` and prints policy/episode summary.
+- `python scripts/eval_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy greedy --episodes 2 --dry-run --print-summary` exits `0` and prints greedy score components.
+- `python scripts/eval_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy random --episodes 30 --dry-run` writes metrics and trace artifacts.
+- `python scripts/eval_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy greedy --episodes 30 --dry-run` writes metrics and trace artifacts using the same observation/runner path.
+- `python scripts/eval_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy rl --episodes 1 --dry-run` writes RL sanity metrics and trace artifacts without claiming superiority.
 
 ### Must Have
-- `MAX_CUPS=4` ordering contract.
+- `MAX_TARGETS=5` ordering contract.
 - Observation padding and `valid_action_mask`.
 - `finished_mask` preventing completed cups from being reselected.
 - Deterministic cup ordering/indexing policy for each decision step.
 - Invalid action behavior: penalty, no low-level execution call for invalid slot, structured log entry, controlled fallback only if explicitly configured.
-- Cup completion contract based on successful placement into the unified target area.
+- Cup/mug completion contract based on successful placement into the class-specific target zone (`sink` for handled mugs, `opposite_counter` for plain cups).
 - Fixed low-level grasp selection: RL cannot select `top_down`, `handle_grasp`, candidate id, gripper width, trajectory, or arm command.
 - Three policies using the same observation builder: Random, risk-aware greedy, RL.
 - Risk-aware greedy score formula/config recorded in summary outputs.
@@ -143,7 +141,7 @@ Wave 4: Task 12 cleanup/refactor guardrails and final readiness.
 
 - [ ] 1. Define cup-ordering RL contract and config
 
-  **What to do**: Add a new cup-ordering configuration and contract path separate from the existing candidate-selector semantics. Create `configs/rl/cup_ordering_robocasa.yaml` with `mode: cup_ordering`, `max_cups: 4`, `action_space: discrete`, reward weights, clutter tiers, seed schedule, artifact paths, RoboCasa timeout settings, and policy names `random`, `greedy`, `rl`. Extend `rl/contracts.py` or add a narrow companion under `rl/` so cup-ordering configs validate without weakening existing `configs/rl/single_arm_selector_robocasa.yaml` validation.
+  **What to do**: Add a new cup/mug-ordering configuration and contract path separate from the existing candidate-selector semantics. Create `configs/rl/cup_mug_ordering_robocasa.yaml` with `mode: cup_ordering`, `max_targets: 5`, `action_space: discrete`, reward weights, seed schedule, artifact paths, and policy names `random`, `greedy`, `rl`. Extend `rl/contracts.py` or add a narrow companion under `rl/` so cup/mug-ordering configs validate without weakening existing legacy RL validation.
   **Must NOT do**: Do not reinterpret the existing grasp-candidate selector as cup ordering by renaming fields only. Do not break existing selector, PPO, or dual-arm configs. Do not add candidate-grasp actions.
 
   **Recommended Agent Profile**:
@@ -161,15 +159,15 @@ Wave 4: Task 12 cleanup/refactor guardrails and final readiness.
 
   **Acceptance Criteria** (agent-executable only):
   - [ ] `python -m unittest discover -s tests -p "test_rl_contracts.py"` exits `0`.
-  - [ ] `python scripts/train_rl.py --config configs/rl/cup_ordering_robocasa.yaml --timesteps 10 --dry-run --print-summary` exits `0` and prints `mode=cup_ordering`, `max_cups=4`, and `action_space=Discrete(4)`.
+  - [ ] `python scripts/train_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --dry-run --print-summary` exits `0` and prints `mode=cup_ordering`, `max_targets=5`, and `action_space=Discrete(5)`.
   - [ ] Existing `configs/rl/single_arm_selector_robocasa.yaml` still validates through its current tests.
 
   **QA Scenarios** (MANDATORY - task incomplete without these):
   ```
   Scenario: Cup-ordering config validates
     Tool: Bash
-    Steps: Run `python scripts/train_rl.py --config configs/rl/cup_ordering_robocasa.yaml --timesteps 10 --dry-run --print-summary`.
-    Expected: Exit code 0; stdout includes `cup_ordering`, `max_cups=4`, `Discrete(4)`, and reward weight names.
+    Steps: Run `python scripts/train_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --dry-run --print-summary`.
+    Expected: Exit code 0; stdout includes `cup_ordering`, `max_targets=5`, `Discrete(5)`, and reward weight names.
     Evidence: .sisyphus/evidence/task-1-contract-dry-run.txt
 
   Scenario: Existing selector config remains valid
@@ -183,7 +181,7 @@ Wave 4: Task 12 cleanup/refactor guardrails and final readiness.
 
 - [ ] 2. Build deterministic cup scene observation and mask builder
 
-  **What to do**: Implement a cup scene observation builder in `rl/` that converts perception/FSM scene data into a fixed `MAX_CUPS=4` observation. Include per-cup features: cup type encoding (`handled`, `handleless`, `unknown`), detection confidence, normalized world position, distance to unified target area, distance/reachability proxy, local clutter/risk estimate, nearest obstacle distance, candidate count, best candidate score, finished flag, and retry count. Include global features: remaining count, completed count, elapsed decision steps, N1/N2/N3, last action success, last failure type. Include `valid_action_mask` and `finished_mask`. Use deterministic ordering by ascending cup slot after stable scene extraction; if instance identity is missing, use nearest-position matching against previous unfinished cups within the episode.
+  **What to do**: Implement a cup/mug scene observation builder in `rl/` that converts perception/FSM scene data into a fixed `MAX_TARGETS=5` observation. Include per-target features such as handle/type encoding, detection confidence, normalized world position, reachability proxy, candidate score, finished flag, and retry count. Include global features: remaining count, completed count, elapsed decision steps, N1/N2/N3, last action success, and last failure type. Include `valid_action_mask` and `finished_mask`. Use deterministic ordering by stable target slot semantics rather than random scene order.
   **Must NOT do**: Do not feed raw RGB-D into RL. Do not require DINO classification to be perfect; support `unknown` cup type. Do not mark padded cups valid. Do not silently randomize cup order.
 
   **Recommended Agent Profile**:
@@ -210,7 +208,7 @@ Wave 4: Task 12 cleanup/refactor guardrails and final readiness.
   ```
   Scenario: Padded multi-cup observation
     Tool: Bash
-    Steps: Run `python -m unittest discover -s tests -p "test_cup_ordering_contracts.py"` after adding cases for 2 real cups and MAX_CUPS=4.
+    Steps: Run `python -m unittest discover -s tests -p "test_cup_ordering_contracts.py"` after adding cases for partial scenes and MAX_TARGETS=5.
     Expected: Exit code 0; test asserts two valid cup slots and two invalid padded slots.
     Evidence: .sisyphus/evidence/task-2-observation-padding.txt
 
@@ -225,7 +223,7 @@ Wave 4: Task 12 cleanup/refactor guardrails and final readiness.
 
 - [ ] 3. Define cup identity, completion, and finished-mask semantics
 
-  **What to do**: Implement/centralize rules for maintaining cup identity within an episode, marking cups completed, and preventing reselection. Completion means the selected cup is successfully placed into the unified target area according to existing execution/environment success signals or target-area position checks. If a selected cup disappears before execution, route through existing perception lost/stale handling. If a completed cup remains visible near the target area, keep it finished and invalid for future actions. If perception lacks stable instance ids, maintain episode-local identity through nearest-neighbor position matching with deterministic tie-breakers.
+  **What to do**: Implement/centralize rules for maintaining target identity within an episode, marking objects completed, and preventing reselection. Completion means the selected target is successfully placed into the correct class-specific target zone (`sink` for handled mugs, `opposite_counter` for plain cups). If a selected target disappears before execution, route through existing perception lost/stale handling. If a completed target remains visible near its target zone, keep it finished and invalid for future actions. If perception lacks stable instance ids, maintain episode-local identity through nearest-neighbor position matching with deterministic tie-breakers.
   **Must NOT do**: Do not require long-term object tracking beyond this episode. Do not reselect completed cups. Do not consider grasp-only success as completion unless placement also succeeds.
 
   **Recommended Agent Profile**:
@@ -306,7 +304,7 @@ Wave 4: Task 12 cleanup/refactor guardrails and final readiness.
 
 - [ ] 5. Implement ordering reward and RoboCasa ordering environment adapter
 
-  **What to do**: Add/extend an environment adapter for direct RoboCasa cup-ordering training. The adapter must expose `Discrete(4)` action semantics, call the existing low-level execution path only for valid selected cups, update cup completion/finished masks, and compute reward breakdown with weights from config: `task_success=100`, `cup_success=20`, `task_failure=80`, `retry=5`, `elapsed_step=1`, `collision=100`, `invalid_action=10`. Stability penalty uses `N1 + N2 + N3`; elapsed time uses deterministic episode/decision steps before wall-clock time. Invalid action receives penalty, logs invalid action, and must not call low-level execution.
+  **What to do**: Add/extend an environment adapter for direct RoboCasa cup/mug-ordering training. The adapter must expose `Discrete(5)` action semantics, call the existing low-level execution path only for valid selected targets, update completion/finished masks, and compute reward breakdown from config. Stability penalty uses `N1 + N2 + N3`; elapsed time uses deterministic episode/decision steps before wall-clock time. Invalid action receives penalty, logs invalid action, and must not call low-level execution.
   **Must NOT do**: Do not make RL choose grasp candidate or fallback. Do not start from an abstract training environment; user selected direct RoboCasa training. Do not suppress collisions or emergency safe retract.
 
   **Recommended Agent Profile**:
@@ -339,7 +337,7 @@ Wave 4: Task 12 cleanup/refactor guardrails and final readiness.
 
   Scenario: Valid cup placement reward breakdown
     Tool: Bash
-    Steps: Run `python scripts/train_rl.py --config configs/rl/cup_ordering_robocasa.yaml --timesteps 10 --dry-run --print-summary`.
+    Steps: Run `python scripts/train_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --dry-run --print-summary`.
     Expected: Exit code 0; summary includes reward keys `task_success`, `cup_success`, `retry`, `elapsed_step`, `collision`, `invalid_action`.
     Evidence: .sisyphus/evidence/task-5-reward-summary.txt
   ```
@@ -348,7 +346,7 @@ Wave 4: Task 12 cleanup/refactor guardrails and final readiness.
 
 - [ ] 6. Integrate cup-ordering mode into train/eval CLI
 
-  **What to do**: Extend `scripts/train_rl.py` and `scripts/eval_rl.py` so `configs/rl/cup_ordering_robocasa.yaml` routes to the new ordering adapter. Add CLI support for `--policy random|greedy|rl`, `--tier low|medium|high`, `--tiers low,medium,high`, `--episodes`, `--timeout-sec`, `--seed`, `--dry-run`, and `--print-summary` for ordering mode. For RL policy, use the existing PPO-compatible path where possible, but keep the policy loading/training clearly separate from candidate selector checkpoints.
+  **What to do**: Extend `scripts/train_rl.py` and `scripts/eval_rl.py` so `configs/rl/cup_mug_ordering_robocasa.yaml` routes to the new ordering adapter. Add CLI support for `--policy random|greedy|rl`, `--episodes`, `--seed`, `--dry-run`, `--render`, `--save-video`, and `--print-summary` for ordering mode. For RL policy, keep the policy loading/training clearly separate from candidate selector checkpoints.
   **Must NOT do**: Do not break existing train/eval behavior for `single_arm_robocasa_ppo.yaml`, `dual_arm_robocasa.yaml`, or `single_arm_selector_robocasa.yaml`. Do not make `main.py` the primary training/eval implementation location.
 
   **Recommended Agent Profile**:
@@ -374,13 +372,13 @@ Wave 4: Task 12 cleanup/refactor guardrails and final readiness.
   ```
   Scenario: Random dry-run eval CLI
     Tool: Bash
-    Steps: Run `python scripts/eval_rl.py --config configs/rl/cup_ordering_robocasa.yaml --policy random --episodes 2 --tier low --dry-run --print-summary`.
-    Expected: Exit code 0; stdout includes `policy_type=random`, `episodes=2`, `tier=low`.
+    Steps: Run `python scripts/eval_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy random --episodes 2 --dry-run --print-summary`.
+    Expected: Exit code 0; stdout includes `policy=random` and `episodes=2`.
     Evidence: .sisyphus/evidence/task-6-random-dry-run.txt
 
   Scenario: Greedy dry-run eval CLI
     Tool: Bash
-    Steps: Run `python scripts/eval_rl.py --config configs/rl/cup_ordering_robocasa.yaml --policy greedy --episodes 2 --tier low --dry-run --print-summary`.
+    Steps: Run `python scripts/eval_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy greedy --episodes 2 --dry-run --print-summary`.
     Expected: Exit code 0; stdout includes `policy_type=greedy` and greedy score component names.
     Evidence: .sisyphus/evidence/task-6-greedy-dry-run.txt
   ```
@@ -420,7 +418,7 @@ Wave 4: Task 12 cleanup/refactor guardrails and final readiness.
 
   Scenario: Greedy score metadata emitted
     Tool: Bash
-    Steps: Run `python scripts/eval_rl.py --config configs/rl/cup_ordering_robocasa.yaml --policy greedy --episodes 2 --tier low --dry-run --print-summary`.
+    Steps: Run `python scripts/eval_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy greedy --episodes 2 --dry-run --print-summary`.
     Expected: Exit code 0; summary includes candidate score, confidence, reachability, clutter/risk, and distance score components.
     Evidence: .sisyphus/evidence/task-7-greedy-metadata.txt
   ```
@@ -497,13 +495,13 @@ Wave 4: Task 12 cleanup/refactor guardrails and final readiness.
   ```
   Scenario: Deterministic RoboCasa random smoke
     Tool: Bash
-    Steps: Run `python scripts/eval_rl.py --config configs/rl/cup_ordering_robocasa.yaml --policy random --episodes 1 --tier low --seed 42 --timeout-sec 120 --print-summary`.
-    Expected: Exit code 0 or controlled structured failure; no uncaught traceback; summary/log includes `policy_type=random`, `tier=low`, `seed=42`, `commit_hash`, `scene_config`, and `counts`.
+    Steps: Run `python scripts/eval_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy random --episodes 1 --seed 42 --dry-run --print-summary`.
+    Expected: Exit code 0 or controlled structured failure; no uncaught traceback; summary/log includes `policy=random`, `seed=42`, `scene_config`, and `counts`.
     Evidence: .sisyphus/evidence/task-9-random-robocasa-smoke.txt
 
   Scenario: Small-budget direct RoboCasa training
     Tool: Bash
-    Steps: Run `python scripts/train_rl.py --config configs/rl/cup_ordering_robocasa.yaml --timesteps 1000 --seed 42 --timeout-sec 300 --print-summary`.
+    Steps: Run `python scripts/train_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --dry-run --print-summary`.
     Expected: Exit code 0 or controlled timeout/failure; summary includes timestep count, reward breakdown fields, artifact path or controlled failure reason; collision handling not suppressed.
     Evidence: .sisyphus/evidence/task-9-training-sanity.txt
   ```
@@ -539,14 +537,14 @@ Wave 4: Task 12 cleanup/refactor guardrails and final readiness.
   ```
   Scenario: Random 30-episode tiered evaluation
     Tool: Bash
-    Steps: Run `python scripts/eval_rl.py --config configs/rl/cup_ordering_robocasa.yaml --policy random --episodes 30 --tiers low,medium,high --seed 42 --print-summary`.
-    Expected: Summary reports 30 total episodes, 10 low, 10 medium, 10 high; includes success/retry/time/collision fields.
+    Steps: Run `python scripts/eval_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy random --episodes 30 --dry-run`.
+    Expected: Metrics/trace artifacts report 30 total episodes and include success/retry/time fields.
     Evidence: .sisyphus/evidence/task-10-random-eval.txt
 
   Scenario: All policies share seed schedule
     Tool: Bash
-    Steps: Run eval dry-run or metadata-only comparison for `random`, `greedy`, and `rl` using the same command shape with `--episodes 30 --tiers low,medium,high --seed 42 --dry-run --print-summary`.
-    Expected: All three summaries list identical tier/seed schedule and policy-specific decision metadata.
+    Steps: Run eval dry-run or metadata-only comparison for `random`, `greedy`, and `rl` using the same command shape with `--episodes 30 --dry-run` for baselines and `--episodes 1 --dry-run` for RL sanity.
+    Expected: All summaries/artifacts list identical scene contract and policy-specific decision metadata without claiming RL superiority.
     Evidence: .sisyphus/evidence/task-10-seed-fairness.txt
   ```
 
@@ -595,7 +593,7 @@ Wave 4: Task 12 cleanup/refactor guardrails and final readiness.
 - [ ] 12. Refactor integration seams and run final local health checks
 
   **What to do**: Review the implementation for scope creep and integration hygiene. Ensure `main.py` remains thin and does not become the home of ordering RL logic. Ensure the new ordering code is isolated in `rl/` or narrowly in `fsm/`/runtime helpers. Run existing and new tests plus diagnostics. Verify no forbidden generated files are staged. Ensure existing selector/candidate-ranking behavior is unchanged.
-  **Must NOT do**: Do not perform drive-by refactors, rename unrelated variables, or broaden support beyond 2-4 cup ordering.
+  **Must NOT do**: Do not perform drive-by refactors, rename unrelated variables, or broaden support beyond the current 5-target cup/mug ordering Phase 1 scope.
 
   **Recommended Agent Profile**:
   - Category: `quick` - Reason: Final cleanup and verification after core work.

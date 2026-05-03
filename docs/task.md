@@ -198,3 +198,267 @@
 - Completed: renamed `docs/getting-started.md` to `docs/getting_start_cjy.md` and updated `docs/index.md`.
 - Completed: expanded the getting-started guide with current `CupMugSorting` commands, including onscreen cup/mug runs, scene smoke, frame saving, expected JSON fields, fixed `layout_and_style_ids: [[1, 1]]`, and the active grasp path list.
 - Verification: confirmed the old path no longer exists, the new path exists, and `docs/index.md` links to `docs/getting_start_cjy.md`.
+
+## 2026-05-03 RL Cup/Mug Ordering Phase 1 Contract
+
+- Completed: added `configs/rl/cup_mug_ordering_robocasa.yaml` for Phase-1 high-level RL ordering with `mode: cup_ordering`, `max_targets: 5`, `action_space: Discrete(5)`, `task_name: robocasa/CupMugSorting`, `layout_and_style_ids: [[1, 1]]`, `num_mugs: 2`, and `num_cups: 3`.
+- Completed: extended `rl/contracts.py` with a separate `cup_ordering` validation and summary branch, preserving the legacy continuous-action PPO config contract for existing RoboCasa / robosuite configs.
+- Completed: expanded `tests/test_rl_contracts.py` to assert the new cup-ordering summary fields and `scripts/train_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --dry-run --print-summary` output.
+- Verification: `python -m unittest discover -s tests -p "test_rl_contracts.py"` passed; cup-ordering train summary and legacy single-arm train summary both exited `0`; modified Python files compile with `syntax ok`.
+- Note: `lsp_diagnostics` could not run because `basedpyright-langserver` is not installed in this local environment.
+- Recommended next step: owner group `logic/fsm`; goal: implement the shared 5-slot cup/mug observation and action-mask builder in `rl/cup_mug_observation.py`; success criteria: `tests/test_cup_mug_ordering_contracts.py` covers exactly 5 slots, stable `mug_1`, `mug_2`, `cup_1`, `cup_2`, `cup_3` ordering, padded/finished/low-confidence/unknown masks, and all-invalid behavior; suggested verification: run `python -m unittest discover -s tests -p "test_cup_mug_ordering_contracts.py"`.
+
+## 2026-05-03 RL Cup/Mug Ordering Phase 1 Observation
+
+- Completed: added `rl/cup_mug_observation.py` with pure 5-slot observation/action-mask helpers for `CupMugSorting`; slot order is explicitly stabilized as `mug_1`, `mug_2`, `cup_1`, `cup_2`, `cup_3` when sim object names are available, with deterministic fallback ordering when names are missing.
+- Completed: observation slots now expose `visible`, `finished`, `has_handle`, `type_id`, `conf`, `pos`, `candidate_score`, `reachability`, `place_zone_id`, `retry_count`, `valid_action`, and `recommended_grasp`; padded/finished/low-confidence/unknown/duplicate/invisible slots are masked invalid without mutating `detected_objects`.
+- Completed: added `tests/test_cup_mug_ordering_contracts.py` covering all-valid five-object scenes, zero/partial target padding, more-than-five truncation, duplicate object ids, low confidence, unknown metadata, finished slots, invisible slots, fallback ordering, and global step context.
+- Verification: `python -m unittest discover -s tests -p "test_cup_mug_ordering_contracts.py"` passed; `python -m unittest discover -s tests -p "test_sorting_policy.py"` passed; `python -m unittest discover -s tests -p "test_sorting_zones.py"` passed; Task-2 Python files compile with `syntax ok`.
+- Known blocker: `python -m unittest discover -s tests -p "test_protocol_contracts.py"` currently fails in `test_infer_detected_objects_adds_handle_grasp_for_cup_like_target` with `AssertionError: 'handle_grasp' not found in ['top_down']`; this predates the new RL observation module and must be fixed before final verification can claim protocol contracts clean.
+- Note: `lsp_diagnostics` could not run because `basedpyright-langserver` is not installed in this local environment.
+- Recommended next step: owner group `logic/fsm`; goal: add shared random and deterministic risk-aware greedy ordering policies in `rl/cup_mug_policies.py`; success criteria: random samples only valid actions, greedy ranks by candidate score/conf/reachability/retry/slot index deterministically, and all-invalid returns a controlled no-op; suggested verification: run `python -m unittest discover -s tests -p "test_cup_mug_ordering_contracts.py"`.
+
+## 2026-05-03 RL Cup/Mug Ordering Phase 1 Baselines
+
+- Completed: added `rl/cup_mug_policies.py` with shared `select_action()` support for `random` and deterministic risk-aware `greedy` policies; both consume the existing observation/action mask and do not duplicate observation-building logic.
+- Completed: random policy samples only valid action indices and returns valid-action debug metadata; greedy ranks valid slots by candidate score, confidence, reachability, retry count, distance-to-place, then slot index.
+- Completed: all-invalid observations return a controlled no-op result with `reason: all_actions_invalid` for both random and greedy.
+- Completed: updated `tests/test_protocol_contracts.py` to match the current active cup-like grasp contract (`top_down` + `handle_top_down`) instead of requiring the removed legacy `handle_grasp` side candidate.
+- Verification: `python -m unittest discover -s tests -p "test_cup_mug_ordering_contracts.py"` passed; `python -m unittest discover -s tests -p "test_rl_contracts.py"` passed; `python -m unittest discover -s tests -p "test_protocol_contracts.py"` passed; modified Python files compile with `syntax ok`.
+- Recommended next step: owner group `logic/fsm`; goal: implement `CupMugOrderingEpisodeRunner` in `rl/cup_mug_runner.py`; success criteria: a mocked 5-object episode completes after five valid actions, invalid actions never call the executor, low-level failures are logged, and all-invalid observations terminate cleanly; suggested verification: run `python -m unittest discover -s tests -p "test_cup_mug_ordering_contracts.py"`.
+
+## 2026-05-03 RL Cup/Mug Ordering Dry-Run Integration + Early Trace Visibility
+
+- Completed: added `rl/cup_mug_runner.py` so cup-ordering episodes now execute through a pure, mockable runner with per-step `step_logs`, `selected_order`, reward breakdown, invalid-action handling, and all-invalid termination.
+- Completed: added `rl/cup_mug_metrics.py` and extended `runtime/run_logger.py` so ordering runs can emit aggregate metrics JSON plus nested `rl_ordering` run-log payloads without breaking legacy log contracts.
+- Completed: extended `rl/harness.py` and `scripts/eval_rl.py` so `cup_ordering` dry-run eval no longer requires a real checkpoint for `random` / `greedy`; it now writes both metrics and a trace report under `outputs/rl_cup_mug_ordering/reports/`.
+- Completed: the early non-video visibility path is now in place. Example trace artifact `outputs/rl_cup_mug_ordering/reports/greedy-episodes-30-trace.json` shows per-step `selected_slot`, `object_id`, `grasp_strategy`, `place_zone`, `reward`, and success, so the user can inspect ordering behavior before simulator-rendered video is added.
+- Completed: train dry-run sanity now writes `outputs/rl_cup_mug_ordering/checkpoints/cup-ordering-sanity-step-5.ckpt.json` with `mode: cup_ordering`, `action_space: Discrete(5)`, `max_targets: 5`, and `sanity: true`.
+- Verification: `python -m unittest discover -s tests -p "test_cup_mug_ordering_contracts.py"` passed with 16 tests; `python -m unittest discover -s tests -p "test_protocol_contracts.py"` passed with 25 tests; `python -m unittest discover -s tests -p "test_rl_contracts.py"` passed with 16 tests.
+- Verification: `python scripts/eval_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy random --episodes 30 --dry-run` wrote `outputs/rl_cup_mug_ordering/metrics/random-episodes-30.json`; `python scripts/eval_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy greedy --episodes 30 --dry-run` wrote `outputs/rl_cup_mug_ordering/metrics/greedy-episodes-30.json` and `outputs/rl_cup_mug_ordering/reports/greedy-episodes-30-trace.json`.
+- Current acceptance-ready artifacts: `outputs/rl_cup_mug_ordering/metrics/random-episodes-30.json`, `outputs/rl_cup_mug_ordering/metrics/greedy-episodes-30.json`, `outputs/rl_cup_mug_ordering/reports/greedy-episodes-30-trace.json`, and `outputs/rl_cup_mug_ordering/checkpoints/cup-ordering-sanity-step-5.ckpt.json`.
+
+## 2026-05-03 RL Cup/Mug Ordering RL Dry-Run + Render Path
+
+- Completed: `policy=rl` dry-run eval now executes through the same runner/metrics path as random/greedy and writes `outputs/rl_cup_mug_ordering/metrics/rl-episodes-1.json` plus `outputs/rl_cup_mug_ordering/reports/rl-episodes-1-trace.json` instead of stopping at print-summary only.
+- Completed: cup-ordering dry-run render now writes deterministic frame artifacts and wires them into the trace report as `frame_paths`, so the user can correlate `selected_slot` / `object_id` / `grasp_strategy` / `place_zone` with step-by-step visuals.
+- Completed: cup-ordering dry-run `--save-video` now degrades gracefully. If `imageio` is installed, it writes `.mp4`; if not, the run still succeeds and the trace report records `video_skip_reason: imageio_not_installed` while preserving frames and metrics.
+- Verification: `python -m unittest discover -s tests -p "test_rl_contracts.py"` passed with 19 tests after adding RL dry-run + render/video assertions.
+- Verification: `python scripts/eval_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy rl --episodes 1 --dry-run` wrote `outputs/rl_cup_mug_ordering/metrics/rl-episodes-1.json`.
+- Verification: `python scripts/eval_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy greedy --episodes 1 --dry-run --render --save-video --video-path outputs/rl_cup_mug_ordering/videos/greedy-episodes-1-manual.mp4` completed successfully; `outputs/rl_cup_mug_ordering/reports/greedy-episodes-1-trace.json` now records `video_output_path` and `video_skip_reason: null`, and the mp4 file exists.
+- Acceptance-ready visual artifacts now include JSON trace + PNG frames + mp4 output in the current environment.
+- Simulator-backed render assessment: current `cup_ordering --render` still uses synthetic trace cards, but `RobocasaEnvWrapper` already exposes live RGB/depth access. The next real integration step is to prefer wrapper camera frames when a real RoboCasa-backed cup-ordering execution path is enabled, with synthetic frames as the fallback.
+- Recommended next step: owner group `integration/merge`; goal: wire the current cup-ordering runner/eval path to a real RoboCasa environment wrapper so `--render` / `--save-video` can capture simulator camera frames for the same episode ids and step logs, instead of synthetic trace cards.
+
+## 2026-05-03 RL Cup/Mug Ordering Real-Background Render Attempt
+
+- Completed: implemented a real-background render attempt in `rl/harness.py`. During cup-ordering dry-run `--render`, the pipeline now tries to create a real `RobocasaEnvWrapper`, reset the `CupMugSorting` scene, render once, and use the resulting camera RGB frame as the background under the same step trace overlays.
+- Completed: if real-frame capture fails, the trace now records `frame_source: synthetic_fallback` and a structured `real_render_error`, instead of silently pretending the output is real simulator imagery.
+- Verification: `python -m unittest discover -s tests -p "test_rl_contracts.py"` passed with 19 tests after adding render-source assertions.
+- Verification: debug trace `outputs/rl_cup_mug_ordering/reports/greedy-episodes-1-realbg-debug.json` confirms the current blocker is environment/runtime availability, not trace/video logic.
+- Follow-up verification in the dedicated RoboCasa environment succeeded: `conda run -n robotic-robocasa-rl python -c "... _run_cup_ordering_dry_run(... report_stem='greedy-episodes-1-realbg-conda5' ...)"` wrote `outputs/rl_cup_mug_ordering/reports/greedy-episodes-1-realbg-conda5.json`, and that trace records `frame_source: real_robocasa_camera` with `real_render_error: null`.
+- Current acceptance status: the dry-run visualization path now supports both real mp4 output and real RoboCasa camera backgrounds when executed inside the `robotic-robocasa-rl` environment. Outside that environment, trace reports still correctly fall back to synthetic frames with a structured error reason.
+
+## 2026-05-03 RL Cup/Mug Ordering Final Phase-1 Closeout
+
+- Completed: render artifacts now also emit per-episode sidecar JSON files (for example `outputs/rl_cup_mug_ordering/reports/greedy-episode-001.sidecar.json`) that summarize `policy`, `episode_id`, `selected_order`, `object_ids`, `has_handle`, `grasp_strategy`, `place_zone`, `success`, and failure fields alongside frame/video paths.
+- Completed: `RL.md` has been lightly corrected so active Phase-1 wording matches the implemented contract: `MAX_TARGETS=5`, class-specific sink/opposite-counter placement, and no claim that RL already outperforms greedy.
+- Verification: `python -m unittest discover -s tests -p "test_rl_contracts.py"` passed with 19 tests after sidecar support and `RL.md` guardrail cleanup.
+- Verification: `python -c "from pathlib import Path; text=Path('RL.md').read_text(encoding='utf-8'); assert 'MAX_CUPS=4' not in text; assert 'max_cups=4' not in text; assert 'Discrete(4)' not in text; assert 'MAX_TARGETS=5' in text; print('rl doc checked')"` passed.
+- Acceptance-ready artifact set: `outputs/rl_cup_mug_ordering/metrics/random-episodes-30.json`, `outputs/rl_cup_mug_ordering/metrics/greedy-episodes-30.json`, `outputs/rl_cup_mug_ordering/metrics/rl-episodes-1.json`, `outputs/rl_cup_mug_ordering/reports/greedy-episodes-30-trace.json`, `outputs/rl_cup_mug_ordering/reports/greedy-episodes-1-realbg-conda5.json`, `outputs/rl_cup_mug_ordering/reports/greedy-episode-001.sidecar.json`, and `outputs/rl_cup_mug_ordering/videos/greedy-episodes-1-manual.mp4`.
+- Recommended next step: either (1) document a single canonical end-user reproduction command set for standard-B acceptance, or (2) move from dry-run ordering demonstration to a true online full-episode `policy -> vision -> grasp/place` continuous viewer demo in one MuJoCo session.
+
+## 2026-05-03 Online Greedy + Vision + Grasp Demo Runner
+
+- Completed: extracted the single-target live execution sequence into `arm/cup_mug_live_execution.py`, so the existing single-target Cup/Mug live path can be reused by a continuous online ordering demo without duplicating reach / close / lift / place orchestration.
+- Completed: added `rl/cup_mug_live_mapping.py` to convert current live `targets + assignments + sorting_metadata` into the same 5-slot observation semantics used by dry-run ordering, plus `slot_index -> current live target/assignment` resolution.
+- Completed: added `scripts/demo_online_cup_mug_ordering.py`, a first online MuJoCo viewer runner that keeps one `CupMugSorting` session alive, re-senses the scene each step, chooses the next slot with `greedy`, resolves the current live target, and runs the real single-target execution helper.
+- Verification: syntax checks passed for `arm/cup_mug_live_execution.py`, `rl/cup_mug_live_mapping.py`, and `scripts/demo_online_cup_mug_ordering.py`; `python -m unittest discover -s tests -p "test_cup_mug_ordering_contracts.py"` passed with 18 tests; `python -m unittest discover -s tests -p "test_rl_contracts.py"` passed with 19 tests.
+- Verification: running `C:\Users\BeautifulLee\miniconda3\envs\robotic-robocasa-rl\python.exe scripts/demo_online_cup_mug_ordering.py --task robocasa/CupMugSorting --policy greedy --layout 1 --style 1 --keep-open-sec 0.2 --save-trace --trace-path outputs/rl_cup_mug_ordering/reports/online-greedy-demo-trace.json` succeeded and wrote `outputs/rl_cup_mug_ordering/reports/online-greedy-demo-trace.json`.
+- Current online demo status: the runner reaches a real continuous episode in one viewer session and records `online_demo_step` / `online_demo_summary`; the observed run completed multiple picks (`mug_1`, `mug_2`, `cup_1`) before stopping on a later `reach` failure, which is now captured as structured trace data rather than an opaque terminal-only failure.
+
+## 2026-05-03 Online Demo Controlled Retry Upgrade
+
+- Completed: upgraded the online demo failure policy so a failed selected slot no longer causes an immediate episode stop. The runner now performs one controlled retry on the same slot after re-sensing the scene and rebuilding the live slot mapping.
+- Completed: added a place-only retry path in `arm/cup_mug_live_execution.py`; if `place` fails after a successful grasp/lift, the system recalculates a fresh `place_plan` and retries `execute_place()` once before giving up.
+- Completed: `scripts/demo_online_cup_mug_ordering.py` now records per-step `attempts`, retry refresh validity, and retry-related failure metadata in the trace artifact.
+- Verification: `python -m unittest discover -s tests -p "test_rl_contracts.py"` remained green with 19 tests; syntax checks passed for the updated online runner and live execution helper.
+- Verification: running `C:\Users\BeautifulLee\miniconda3\envs\robotic-robocasa-rl\python.exe scripts/demo_online_cup_mug_ordering.py --task robocasa/CupMugSorting --policy greedy --layout 1 --style 1 --keep-open-sec 0.2 --save-trace --trace-path outputs/rl_cup_mug_ordering/reports/online-greedy-demo-trace.json --retry-on-failure-once` succeeded and wrote a trace where `finished` includes `mug_1`, `mug_2`, and `cup_1`.
+- Current online demo status: completion depth improved from early reach/place termination to three successful objects in one continuous viewer session; the current terminal condition is now `all_actions_invalid`, meaning the next bottleneck is live re-detection/slot validity for the remaining objects rather than immediate execution collapse.
+- Recommended next step: investigate why remaining visible cups collapse into invalid slots after several successful picks, then adjust post-place re-sensing / visibility handling so the 5-slot observation preserves valid actions deeper into the episode.
+
+## 2026-05-03 Online Demo Mapping + Place Retry Follow-up
+
+- Completed: `vision/sorting_policy.assign_sim_metadata_to_targets()` now supports a controlled second-pass nearest-neighbor fallback for still-unmatched visual targets, reducing late-episode loss of `sim_object_name` after objects move.
+- Completed: `arm/cup_mug_live_execution.py` now retries `place` once by recomputing `place_plan` from refreshed assignment pose instead of forcing a full re-grasp immediately.
+- Verification: `python -m unittest discover -s tests -p "test_sorting_policy.py"` passed with 6 tests; `python -m unittest discover -s tests -p "test_rl_contracts.py"` passed with 19 tests after the mapping/online retry changes.
+- Verification: rerunning the online greedy demo with `--retry-on-failure-once` still succeeds as a process and writes `outputs/rl_cup_mug_ordering/reports/online-greedy-demo-trace.json`; the latest trace shows `retry_refresh_slot_valid=true` on the retried slot, so live mapping stayed intact.
+- Current online demo status: the dominant bottleneck has shifted again. Slot validity no longer collapses first; the remaining failure is a later `handle_top_down` reach on `mug_2` second attempt, with `reachability_diagnosis.likely_cause = needs_action_space_or_reachability_probe`.
+
+## 2026-05-03 Online Demo Handle-Target Conservative Defaults
+
+- Completed: the online runner now automatically applies a more conservative execution profile for `has_handle=true` slots, enabling handle-target-specific defaults such as `enable_base_torso_preposition`, `auto_preposition_retry`, and `retry_place_once` without changing cup defaults.
+- Verification: rerunning the online greedy demo shows these defaults are active in trace metadata (`base_torso_preposition.enabled=true` on handle-target attempts).
+- Current limitation: the same trace also shows `effective_should_move=false`, so the conservative policy is enabled but does not yet translate into actual base motion in the current run. The dominant failure remains a later `handle_top_down` reach issue rather than slot-mapping collapse.
+- Recommended next step: make calibrated base action mapping the default for handle-target online attempts so the preposition stage can produce meaningful movement instead of remaining a no-op.
+
+## 2026-05-03 Online Demo Handle Base-Mapping Success
+
+- Completed: for handle targets, the online runner now auto-calibrates base action mapping when needed and applies a more aggressive but still bounded preposition policy (`desired_xy_standoff=0`, `base_xy_deadband=0`, lower `base_action_limit`) before executing `handle_top_down`.
+- Verification: rerunning `scripts/demo_online_cup_mug_ordering.py` in the RoboCasa environment produced `outputs/rl_cup_mug_ordering/reports/online-greedy-demo-trace.json` with `selected_order = [0, 0, 3, 1, 2]` and `finished` containing all five target objects (`mug_2`, `mug_1`, `cup_3`, `cup_1`, `cup_2`).
+- Verification: handle-path trace metadata now shows `base_mapping_used=true`, `effective_should_move=true`, and `xy_distance_improved=true`, confirming that preposition is no longer a no-op for handle targets.
+- Current online demo status: the greedy + vision + real grasp/place runner can now complete a full 5-object CupMugSorting episode in one continuous MuJoCo viewer session under the verified RoboCasa environment.
+- Recommended next step: if desired, promote the same online execution path from `policy=greedy` to `policy=rl` (keeping the same live slot mapping and execution helper) once the learned policy is ready to replace the current RL sanity stub.
+
+## 2026-05-03 Sink Split Placement Update
+
+- Completed: updated the placement semantics from `mug -> sink / cup -> opposite_counter` to `mug -> right_sink / cup -> left_sink` so both categories place into distinct sink basins rather than splitting sink/counter.
+- Completed: `planner/sorting_zones.py`, `configs/tasks/cup_mug_sorting.yaml`, and `configs/rl/cup_mug_ordering_robocasa.yaml` now align on the left/right sink split contract.
+- Verification target: `tests/test_sorting_zones.py` asserts handled mugs place into `right_sink` and plain cups place into `left_sink` when sink anchors are available.
+
+## 2026-05-03 Sink Split Online Validation Result
+
+- Verification: after syncing `rl/contracts.py` and `tests/test_rl_contracts.py` to the new sink-split contract, `python -m unittest discover -s tests -p "test_rl_contracts.py"` passed with 19 tests and `python -m unittest discover -s tests -p "test_sorting_zones.py"` passed with 4 tests.
+- Online result: rerunning the online greedy demo with the new `mug -> right_sink / cup -> left_sink` placement contract succeeded as a process, but the latest `outputs/rl_cup_mug_ordering/reports/online-greedy-demo-trace.json` only completed the two mug objects before terminating with a later `reach` failure.
+- Interpretation: the sink-split policy is implemented correctly and contract-consistent, but under the current online execution stability it is less robust than the previous placement policy that had already reached a full 5/5 episode.
+
+## 2026-05-03 RL Cup/Mug Online Checkpoint Interface Reservation + Failure Classification
+
+- Completed: confirmed the current online ordering path had already finished most stage-1 work in code: live 5-slot mapping, retry-on-failure with re-sense/remap, later-step handle-target conservative execution defaults, base-mapping auto-calibration, and JSON trace persistence.
+- Completed: added a reserved `policies.checkpoint_interface` contract to `configs/rl/cup_mug_ordering_robocasa.yaml` and `rl/contracts.py`, so cup-ordering now explicitly records its checkpoint artifact kind, schema version, and the current `supports_inference=false` capability boundary instead of implying real learned inference already exists.
+- Completed: `rl/harness.py` now exposes shared cup-ordering checkpoint inspection / RL-policy selection helpers. The current dry-run sanity artifact is inspectable as a checkpoint-shaped artifact, but eval/online checkpoint mode now fail with a controlled capability error instead of silently falling back or using a raw `NotImplementedError`.
+- Completed: `scripts/demo_online_cup_mug_ordering.py` no longer throws a raw `NotImplementedError` for `--policy rl --rl-policy-mode checkpoint`; it now reports structured `checkpoint_interface`, `failure_reason`, and `failure_category` fields, and can persist that status to trace JSON.
+- Completed: online RL trace summaries now include an explicit `failure_category` in addition to raw `failure_phase` / `failure_reason`, so later analysis can distinguish policy-no-valid-action, slot-resolution, candidate-build/threshold, execution-phase, and checkpoint-interface failures.
+- Verification: `tests/test_rl_contracts.py` now covers config summary, reserved checkpoint artifact metadata, checkpoint inspection, stub RL action continuity, and controlled eval failure for checkpoint mode.
+- Recommended next step: owner group `logic/fsm`; goal: implement a true cup-ordering checkpoint inference backend that consumes the existing 5-slot observation contract and replaces the current sanity stub without changing online trace schema or low-level execution helpers. Success criteria: `--policy rl --rl-policy-mode checkpoint --rl-checkpoint <artifact>` selects real actions from model outputs, and dry-run/online traces clearly report checkpoint-backed policy metadata. Suggested verification: add focused tests for observation flattening + model output decoding, then rerun `python scripts/eval_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy rl --checkpoint <artifact> --episodes 1 --dry-run` plus the online viewer command in the RoboCasa environment.
+- Recommended decision point: if the highest priority is a stable end-to-end online demo, the safer fallback is to keep mugs in sink but return cups to a reachable right-side tabletop placement with non-stacking offsets. If the highest priority is specifically demonstrating left/right sink semantics, we should expect more execution tuning work before the online viewer demo becomes consistently reliable again.
+
+## 2026-05-03 Placement Fallback Back To Stable Counter Policy
+
+- Completed: reverted the cup placement target from `left_sink` back to a more stable right-side counter placement, while keeping mugs in the sink.
+- Completed: the counter placement path is now explicitly treated as a spread tabletop target (`placement_rule: spread_counter_edge`) rather than a single shared stacking point.
+- Completed: `planner/sorting_zones.py`, `configs/tasks/cup_mug_sorting.yaml`, `configs/rl/cup_mug_ordering_robocasa.yaml`, `rl/contracts.py`, and `tests/test_rl_contracts.py` were synchronized to the restored stable policy (`mug -> sink`, `cup -> right_counter`).
+- Recommended next step: re-run the online greedy demo and compare whether the full-episode completion returns to the earlier 5/5 behavior under the restored stable placement contract.
+
+## 2026-05-03 Placement Fallback Online Verification
+
+- Verification: after restoring the more stable placement policy, `python -m unittest discover -s tests -p "test_rl_contracts.py"` passed with 19 tests and `python -m unittest discover -s tests -p "test_sorting_zones.py"` passed with 4 tests.
+- Verification: rerunning the online greedy demo with the restored policy still succeeded as a process and wrote `outputs/rl_cup_mug_ordering/reports/online-greedy-demo-trace.json`, but this specific run terminated on a later `reach` failure after completing two mug objects.
+- Interpretation: reverting cups from `left_sink` to `right_counter` is still the safer design choice for Phase 1, but the online completion rate is not determined by placement policy alone; real candidate/execution variability remains a dominant factor.
+- Recommended next step: keep the stable placement policy (`mug -> sink`, `cup -> right_counter`) and focus the next debugging pass on grasp candidate quality / reachability robustness rather than reopening the placement design debate.
+
+## 2026-05-03 Safe Retreat + Sink Spacing Follow-up
+
+- Completed: `arm/robocasa_primitives.execute_place()` now adds a `safe_retreat` phase after the initial retract, with `safe_retreat_target` recorded in the place summary so post-place exits can be inspected explicitly.
+- Completed: `planner/sorting_zones.py` now supports simple sink spacing for handled mugs (`placement_rule: spaced_sink_basin`) using small per-mug y-offsets instead of sending all handled mugs to the exact same basin point.
+- Verification: `python -m unittest discover -s tests -p "test_sorting_zones.py"` passed with 5 tests and `python -m unittest discover -s tests -p "test_rl_contracts.py"` passed with 19 tests after these changes.
+- Online result: the latest online greedy run still terminated on a later `reach` failure before sink crowding became the primary issue, so the new sink-spacing rule did not yet get a fair chance to improve end-state behavior in that run.
+- Current interpretation: these two mitigations are now in place, but the dominant blocker remains later-step candidate / reach robustness rather than placement-exit geometry alone.
+
+## 2026-05-03 Online Candidate Identity Preservation Follow-up
+
+- Completed: the online execution candidate fallback path now preserves `sim_object_name` identity when possible, preferring a fallback target for the exact intended sim object instead of degrading to a generic label-based cup/mug fallback.
+- Verification: rerunning the online greedy demo with the fix still succeeded as a process and wrote `outputs/rl_cup_mug_ordering/reports/online-greedy-demo-trace.json`.
+- Observed effect: the inspected trace no longer shows the earlier obvious semantic corruption where a handle target could collapse into a generic `cup/top_down` fallback; the latest run completed `mug_1`, `mug_2`, and `cup_1` before stopping on a later `reach` failure.
+- Current status: identity preservation is improved, but stable 5/5 completion is still blocked by later reachability/candidate variability rather than placement semantics alone.
+- Recommended next step: focus the next pass on improving later-step candidate quality / reach robustness (especially after multiple successful object moves) rather than broadening fallback semantics further.
+
+## 2026-05-03 Online Greedy Baseline 5/5 Restored
+
+- Completed: the online candidate builder now prefers the current frame's fresh assignment for the same `sim_object_name` instead of over-trusting stale assignment state, reducing later-step semantic drift.
+- Verification: rerunning the online greedy demo after this fix produced `outputs/rl_cup_mug_ordering/reports/online-greedy-demo-trace.json` with `selected_order = [0, 1, 2, 3, 1]` and `finished` containing all five target objects (`mug_1`, `mug_2`, `cup_1`, `cup_3`, `cup_2`).
+- Verification: the same trace records `retry_counts = {}` and `failure_reason = null`, showing that the latest online greedy baseline run finished cleanly without residual failure state.
+- Current baseline status: the greedy + vision + real grasp/place online runner is now stable enough to serve as the reference baseline for the next phase, where the same live slot mapping and execution helper can be reused for `policy=rl` online evaluation.
+- Recommended next step: start promoting `policy=rl` onto the same online execution path while keeping greedy as the comparison baseline.
+
+## 2026-05-03 Online RL Execution Entry Enabled
+
+- Completed: `scripts/demo_online_cup_mug_ordering.py` now accepts `--policy rl` and routes it through the same live slot mapping, MuJoCo viewer session, and real grasp/place execution chain as `greedy`.
+- Completed: `LHYstart.md` now includes both the recommended online greedy command and the current online RL sanity command.
+- Verification: `python -m unittest discover -s tests -p "test_rl_contracts.py"` remained green with 19 tests after adding the online RL entry.
+- Current RL status: the online RL path is connected at the control-flow level, but it still uses the existing sanity/stub ordering policy and needs its own stability pass before it should be presented as a polished online demo.
+- Recommended next step: keep `greedy` as the online gold baseline and perform one dedicated stabilization pass for `policy=rl` on the same execution chain before comparing behaviors.
+
+## 2026-05-03 Online RL Quality-Biased Stub Verification
+
+- Completed: the current RL sanity selector in `rl/harness.py` now uses a quality-biased stub ranking over valid actions instead of purely uniform random selection.
+- Verification: `python -m unittest discover -s tests -p "test_rl_contracts.py"` remained green with 19 tests after the RL sanity selector update.
+- Verification: running the online RL command in the RoboCasa environment enters the same online execution path and viewer flow as the greedy baseline.
+- Current RL blocker: the latest run failed at `candidate_build` for a later handle target because the online handle-candidate gate rejected a candidate with score `0.2871`, slightly below the current `0.30` threshold. This means the remaining RL online issue is now a threshold/policy interaction, not a missing integration path.
+- Recommended next step: perform one focused RL-specific stabilization pass for handle-target candidate acceptance (or policy-side slot preference) before using `policy=rl` as a serious online comparison against the restored greedy 5/5 baseline.
+
+## 2026-05-03 Online RL Later-Step Stabilization In Progress
+
+- Completed: the RL sanity selector now uses a quality-biased stub ranking over valid actions instead of purely random sampling.
+- Completed: the online RL path is still using the same live slot mapping and execution helper as greedy, preserving apples-to-apples execution semantics.
+- Current status: later-step RL stabilization is still incomplete. The dominant issue remains handle-target candidate acceptance / consistency after one or more successful steps, rather than wiring or viewer integration.
+- Additional note: the latest code path indicates one direct implementation issue to fix next (`step_index`-dependent threshold logic needs to be passed through `_build_live_execution_candidate()` cleanly) before drawing stronger conclusions from the newest RL online attempts.
+- Recommended next step: fix the `step_index` threshold plumbing bug, then rerun the online RL demo and continue the RL-only later-step handle tolerance pass while keeping greedy as the gold baseline.
+
+## 2026-05-03 Online RL Later-Step Tolerance Pass
+
+- Completed: the RL sanity selector now uses a `quality_biased_stub` ordering policy rather than pure random valid-slot sampling, and the online candidate gate now records RL-specific threshold metadata in trace output.
+- Completed: the later-step `step_index` threshold plumbing bug was fixed, so RL-specific handle thresholds are now applied intentionally rather than accidentally.
+- Verification: `python -m unittest discover -s tests -p "test_rl_contracts.py"` remained green with 19 tests.
+- Verification: rerunning the online RL command still enters the full viewer / slot mapping / execution chain, but the latest run continues to stop after completing one handled object, with `failure_reason = candidate_build` on a later handle target.
+- Current RL online status: the remaining work is no longer integration. It is now a narrow RL-specific threshold / candidate-acceptance tuning problem over an already working online control path.
+- Recommended next step: if we continue on the RL line, the next pass should directly experiment with RL-only handle thresholds / fallback acceptance policy against the preserved greedy 5/5 baseline rather than reopening the broader online architecture.
+
+## 2026-05-03 Online RL Checkpoint Inference Path
+
+- Completed: reviewed `.sisyphus/plans/rl-cup-mug-final-training.md` and `.sisyphus/plans/online-greedy-vision-grasp-demo.md`; Momus marked both plans `[OKAY]`. Current code already exceeds the original greedy-only online plan, so the next useful slice was narrowed to replacing the RL sanity selector path with a real checkpoint inference seam.
+- Completed: `rl/harness.py` now exposes `flatten_cup_ordering_observation()` for the fixed 5-slot observation contract. The vector is stable length 81: five slots × 14 numeric features, six global features, and five action-mask features.
+- Completed: `select_cup_ordering_rl_action()` now supports checkpoint mode by loading `.zip` PPO artifacts through `stable_baselines3.PPO.load()` and calling `model.predict(flattened_observation, deterministic=True)`. The returned discrete action is decoded to a slot index and trace debug records `selection_mode=checkpoint_inference`, `predicted_action`, `predicted_action_valid`, `observation_vector_length`, and checkpoint metadata.
+- Completed: `configs/rl/cup_mug_ordering_robocasa.yaml` now marks the checkpoint interface as `supports_inference: true`; dry-run sanity JSON artifacts remain explicitly non-inference-capable via `supports_inference=false` and `unsupported_reason=cup_ordering_sanity_artifact_has_no_model_weights`.
+- Completed: `scripts/eval_rl.py` now reports controlled CLI errors for missing RL runtime / unsupported checkpoint problems instead of printing a raw traceback.
+- Verification: `python -m unittest discover -s tests -p "test_rl_contracts.py"` passed with 25 tests, including fake-PPO coverage for checkpoint loading and model prediction without requiring local `stable_baselines3`.
+- Verification: `python scripts/eval_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy rl --episodes 1 --dry-run` still writes RL sanity metrics through the existing stub path when no checkpoint is supplied.
+- Local limitation: this environment does not have `stable_baselines3` installed and only contains sanity JSON artifacts under `outputs/rl_cup_mug_ordering/checkpoints/`; therefore real `.zip` checkpoint inference is code-tested with a fake PPO and must still be exercised in the RoboCasa/SB3 environment with a real trained checkpoint.
+- Recommended next step: produce or provide a real cup-ordering `.zip` PPO checkpoint whose observation input matches the 81-feature vector, then run `python scripts/eval_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy rl --episodes 1 --dry-run --checkpoint <checkpoint.zip>` and the online command `python scripts/demo_online_cup_mug_ordering.py --policy rl --rl-policy-mode checkpoint --rl-checkpoint <checkpoint.zip> --layout 1 --style 1 --save-trace --keep-open-sec 1` inside the `robotic-robocasa-rl` / SB3-capable environment.
+
+## 2026-05-03 Online RL Stub Handle-First Stabilization
+
+- Completed: inspected the current `outputs/rl_cup_mug_ordering/reports/online-rl-demo-trace.json` against the successful greedy trace. The RL sanity/stub path completed `mug_1`, then selected `cup_3` and stopped on `failure_reason=reach`; the successful greedy reference cleared both handled mugs before moving to plain cups.
+- Completed: updated the RL sanity selector in `rl/harness.py` from pure quality-biased ranking to `handle_first_quality_biased_stub`. It still consumes the same valid-action mask and quality terms, but now ranks valid `has_handle=true` slots before plain cups; after handle slots are finished/masked, it returns to quality ranking among plain cups.
+- Rationale: this keeps RL within the same high-level ordering-only contract while matching the empirically stable online execution shape: clear handle targets first, then execute top-down cup placements. It does not change greedy, live mapping, grasp strategy, placement zones, or low-level execution helpers.
+- Verification: `python -m unittest discover -s tests -p "test_rl_contracts.py"` passed with 27 tests, including explicit coverage that RL stub prioritizes handle targets over higher-scoring plain cups and falls back to quality ranking after handle targets are finished.
+- Suggested online verification: rerun `python scripts/demo_online_cup_mug_ordering.py --task robocasa/CupMugSorting --policy rl --layout 1 --style 1 --keep-open-sec 0.2 --save-trace --trace-path outputs/rl_cup_mug_ordering/reports/online-rl-demo-trace.json --retry-on-failure-once` inside the RoboCasa environment. Success criteria: `finished` contains all five target objects and `failure_reason=null`; trace `policy_debug.selection_mode` should show `handle_first_quality_biased_stub`.
+
+## 2026-05-03 Online RL Stub 5/5 Stability Pass
+
+- Completed: after the handle-first RL stub change, a real RoboCasa online rerun exposed a retry-time identity drift (`mug_1` retry remapped to `mug_2`) and a separate `_build_live_execution_candidate()` bug where `fresh_assignments` could be referenced before assignment. Both were fixed: retry refresh now prefers the original `sim_object_name` when it is still valid, and `fresh_assignments` is always initialized before being referenced.
+- Completed: `rl/cup_mug_live_mapping.py` now provides `resolve_live_target_with_identity_preference(...)`, and `scripts/demo_online_cup_mug_ordering.py` uses it on retry refresh so the same decision step keeps targeting the same object identity when possible.
+- Verification: local focused regression remained green after the retry/identity fix: `python -m unittest discover -s tests -p "test_cup_mug_ordering_contracts.py"` passed with 20 tests, and `python -m unittest discover -s tests -p "test_rl_contracts.py"` passed with 27 tests.
+- Real online result: running `C:\Users\BeautifulLee\miniconda3\envs\robotic-robocasa-rl\python.exe scripts/demo_online_cup_mug_ordering.py --task robocasa/CupMugSorting --policy rl --layout 1 --style 1 --keep-open-sec 0.2 --save-trace --trace-path outputs/rl_cup_mug_ordering/reports/online-rl-demo-trace-stability-pass-3.json --retry-on-failure-once` completed a full 5/5 episode.
+- Evidence from `outputs/rl_cup_mug_ordering/reports/online-rl-demo-trace-stability-pass-3.json`: `selected_order = [1, 0, 1, 0, 0]`, `finished` contains all five target objects (`mug_2`, `mug_1`, `cup_2`, `cup_1`, `cup_3`), `retry_counts = {}`, `failure_reason = null`, and step-level `policy_debug.selection_mode = handle_first_quality_biased_stub`.
+- Current status: the sanity/stub RL path now reaches the same live slot mapping + real grasp/place chain as greedy and has demonstrated a full 5/5 online completion in the validated RoboCasa environment. This is a stability milestone for the stub ordering policy, not evidence of learned-policy superiority.
+- Recommended next step: preserve the new 5/5 trace as the reference RL-sanity online artifact, then either (1) repeat the same command across a small seed/layout set to measure robustness variance, or (2) switch back to the checkpoint path and start validating a real learned policy against the same live execution contract.
+
+## 2026-05-03 Greedy Placement / Retreat / Handle-Threshold Follow-up
+
+- Completed: cup counter placement targets are no longer a single shared point. `planner/sorting_zones.py` now offsets same-category cup targets along local counter `y` using the object suffix (`cup_1`, `cup_2`, `cup_3`) so repeated plain-cup placements are less likely to stack directly on top of one another. `tests/test_sorting_zones.py` now asserts distinct counter targets for multiple cups.
+- Completed: `arm/robocasa_primitives.execute_place()` now uses a more conservative post-place retreat: `safe_retreat_height` was increased from `0.22` to `0.30`, and `retract_target` no longer drops below the pre-place end-effector height.
+- Real result: the first greedy retreat-focused rerun (`online-greedy-demo-trace-retreat-pass.json`) still failed before any placement-side benefit could be assessed, because the run terminated immediately on a handle candidate threshold miss (`candidate_score=0.2882 < 0.30`). This weakens the hypothesis that retreat height was the primary current blocker.
+- Completed: a greedy-only narrow handle-candidate margin accept was added for strong geometry cases (`0.25 <= score < 0.30` with sufficient `handle_point_count`, `protrusion_quality`, and bounded `gripper_width`), without changing RL behavior or the nominal `0.30` threshold for ordinary cases.
+- Real result: the second threshold-focused rerun (`online-greedy-demo-trace-threshold-pass-2.json`) progressed further than the immediate threshold-fail case and successfully completed `mug_1`, but still terminated later on `mug_2` with `failure_reason=reach` and `retry_counts={"mug_2": 2}`. This indicates the threshold softening helps the earliest gate, but later-step handle execution remains unstable.
+- Current interpretation: placement spread and higher safe-retreat are sensible mitigations, but the dominant greedy blocker is still later-step handle robustness rather than cup stacking alone. Threshold softening reduced one early failure mode, yet did not restore stable 5/5 completion by itself.
+- Recommended next step: if greedy visual stability remains the priority, focus the next pass on later-step handle execution robustness (for example, conservative handle candidate acceptance conditioned on step index / retry state, or tighter post-success re-sense sanity checks) before revisiting placement geometry again.
+
+## 2026-05-03 Greedy Later-Step Handle Stability Pass
+
+- Completed: enabled one controlled base-preposition retry path for `handle_top_down` by expanding `arm/reach_retry.should_retry_with_preposition()` from `("top_down",)` to `("top_down", "handle_top_down")`. This does not change policy ordering; it only lets later-step handle reaches use the same single recovery mechanism already available to top-down reaches.
+- Real result: `outputs/rl_cup_mug_ordering/reports/online-greedy-demo-trace-later-step-pass.json` progressed further than the earlier threshold-only pass. The run completed `mug_1` successfully, then advanced to `mug_2` and reached the place phase before failing, instead of terminating immediately on the first handle candidate gate.
+- Evidence from the later-step trace: `mug_2` no longer died at the first reach gate. The first `mug_2` attempt reached/closed/lifted successfully but failed at `failure_phase=place`; the second attempt then fell back to a new `candidate_build` failure with `candidate_score=0.2893 < 0.30`. This indicates measurable progress in handle reach robustness, but not a full greedy 5/5 recovery yet.
+- Current interpretation: the dominant greedy blocker has shifted again. Early handle gating is less brittle than before, and later-step handle reach is more resilient, but the remaining instability now spans both post-grasp placement and retry-time candidate consistency for handled targets.
+- Recommended next step: if we continue on greedy, the most targeted follow-up is no longer generic retreat height or cup spread; it is handled-object place stability plus retry-time handle candidate retention for the second mug.
+
+## 2026-05-03 Greedy Retreat Ceiling Fix + 5/5 Recovery
+
+- Completed: investigated the new greedy failure mode where the arm appeared to rise into upper cabinet geometry after placing a handled mug. The direct code path was `arm/robocasa_primitives.execute_place()`, where `safe_retreat_target.z` had been raised to `max(start_pos[2], place_target.z + 0.30)` with no ceiling-aware clamp.
+- Evidence: `online-greedy-demo-trace-later-step-pass.json` showed a handled `place` failure whose `history_tail` stayed in `phase=safe_retreat` while trying to reach `safe_retreat_target.z ≈ 1.317`, but the end-effector stalled near `z ≈ 1.243` with residual error around `0.075`, matching the user's observation that the arm was effectively blocked by overhead geometry rather than failing at grasp or reach.
+- Completed: added a conservative ceiling cap in `arm/robocasa_primitives.execute_place()` so `safe_retreat_target.z` no longer exceeds `1.24`. This preserves the vertical retreat logic but prevents the arm from blindly pushing into likely upper-cabinet space.
+- Verification: local focused regression remained green after the retreat-cap change: `python -m unittest discover -s tests -p "test_rl_contracts.py"` passed with 27 tests and `python -m unittest discover -s tests -p "test_sorting_zones.py"` passed with 6 tests.
+- Real online result: rerunning greedy with `C:\Users\BeautifulLee\miniconda3\envs\robotic-robocasa-rl\python.exe scripts/demo_online_cup_mug_ordering.py --task robocasa/CupMugSorting --policy greedy --layout 1 --style 1 --keep-open-sec 0.2 --save-trace --trace-path outputs/rl_cup_mug_ordering/reports/online-greedy-demo-trace-retreat-cap-pass.json --retry-on-failure-once` completed a full 5/5 episode.
+- Evidence from `outputs/rl_cup_mug_ordering/reports/online-greedy-demo-trace-retreat-cap-pass.json`: `selected_order = [1, 0, 0, 2, 1]`, `finished` contains all five target objects (`mug_2`, `mug_1`, `cup_1`, `cup_3`, `cup_2`), `retry_counts = {}`, `failure_reason = null`, and `last_success = true`.
+- Current greedy status: with cup counter spread, handle threshold softening, handle later-step retry, and the retreat ceiling cap together, the greedy online visual path has recovered a real 5/5 completion in the validated RoboCasa environment.
+- Recommended next step: preserve `online-greedy-demo-trace-retreat-cap-pass.json` as the current greedy reference artifact, then repeat the same command across a few randomized runs to see whether the retreat ceiling fix improved robustness or just repaired one layout/scene interaction.

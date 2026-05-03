@@ -476,13 +476,26 @@ def execute_place(
     place_tolerance=0.018,
     release_steps=40,
     retract_height=0.10,
+    safe_retreat_height=0.30,
+    safe_retreat_max_z=1.24,
     render_sleep_sec=0.005,
 ):
     target = np.asarray(place_target, dtype=float)
     start_pos = get_robot0_eef_pos(obs)
     place_high = np.asarray([target[0], target[1], max(start_pos[2], target[2] + 0.12)], dtype=float)
     place_low = np.asarray([target[0], target[1], target[2]], dtype=float)
-    retract_target = np.asarray([target[0], target[1], target[2] + float(retract_height)], dtype=float)
+    retract_target = np.asarray(
+        [target[0], target[1], max(start_pos[2], target[2] + float(retract_height))],
+        dtype=float,
+    )
+    safe_retreat_target = np.asarray(
+        [
+            target[0],
+            target[1],
+            min(float(safe_retreat_max_z), max(start_pos[2], target[2] + float(safe_retreat_height))),
+        ],
+        dtype=float,
+    )
     waypoints = [("place_high", place_high), ("place_low", place_low)]
 
     current_obs = obs
@@ -535,35 +548,42 @@ def execute_place(
                 time.sleep(render_sleep_sec)
 
     retract_success = False
-    for step_idx in range(int(max_steps_per_waypoint)):
-        current_pos = get_robot0_eef_pos(current_obs)
-        error = retract_target - current_pos
-        error_norm = float(np.linalg.norm(error))
-        history.append(
-            {
-                "phase": "retract",
-                "step": step_idx,
-                "eef_pos": current_pos.tolist(),
-                "target_pos": retract_target.tolist(),
-                "error_norm": error_norm,
-            }
-        )
-        if error_norm <= float(place_tolerance):
-            retract_success = True
+    retreat_waypoints = [("retract", retract_target), ("safe_retreat", safe_retreat_target)]
+    for phase_name, waypoint in retreat_waypoints:
+        phase_success = False
+        for step_idx in range(int(max_steps_per_waypoint)):
+            current_pos = get_robot0_eef_pos(current_obs)
+            error = waypoint - current_pos
+            error_norm = float(np.linalg.norm(error))
+            history.append(
+                {
+                    "phase": phase_name,
+                    "step": step_idx,
+                    "eef_pos": current_pos.tolist(),
+                    "target_pos": waypoint.tolist(),
+                    "error_norm": error_norm,
+                }
+            )
+            if error_norm <= float(place_tolerance):
+                phase_success = True
+                break
+            _, position_delta = compute_position_delta(
+                error,
+                action_mapping=action_mapping,
+                position_gain=position_gain,
+                step_limit=step_limit,
+            )
+            current_obs, _, _, _ = env.step(
+                build_flat_reach_action(env, position_delta, gripper_close=GRIPPER_OPEN)
+            )
+            if step_idx % 5 == 0:
+                env.render()
+                if render_sleep_sec > 0.0:
+                    time.sleep(render_sleep_sec)
+        if not phase_success:
+            retract_success = False
             break
-        _, position_delta = compute_position_delta(
-            error,
-            action_mapping=action_mapping,
-            position_gain=position_gain,
-            step_limit=step_limit,
-        )
-        current_obs, _, _, _ = env.step(
-            build_flat_reach_action(env, position_delta, gripper_close=GRIPPER_OPEN)
-        )
-        if step_idx % 5 == 0:
-            env.render()
-            if render_sleep_sec > 0.0:
-                time.sleep(render_sleep_sec)
+        retract_success = True
 
     final_pos = get_robot0_eef_pos(current_obs)
     return current_obs, {
@@ -572,8 +592,9 @@ def execute_place(
         "place_high": place_high.tolist(),
         "place_low": place_low.tolist(),
         "retract_target": retract_target.tolist(),
+        "safe_retreat_target": safe_retreat_target.tolist(),
         "robot0_eef_final": final_pos.tolist(),
-        "final_error_to_retract": float(np.linalg.norm(retract_target - final_pos)),
+        "final_error_to_retract": float(np.linalg.norm(safe_retreat_target - final_pos)),
         "release_steps": int(release_steps),
         "history_tail": history[-10:],
     }

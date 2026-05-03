@@ -21,7 +21,7 @@ labels:
   - glass cup
 sorting:
   handled_zone: sink
-  plain_zone: opposite_counter
+  plain_zone: right_counter
   handled_strategy: handle_top_down
   plain_strategy: top_down
   handled_arm: right
@@ -33,4 +33,4 @@ verification:
     - summary.targets contains multiple drinkware detections when the detector is available.
     - assignments use handle_top_down for objects with a handle_top_down candidate.
     - assignments use top_down for objects without a handle_top_down candidate.
-    - place_plan.zone is sink for handled mugs and opposite_counter for plain cups.
+    - place_plan.zone is sink for handled mugs and right_counter for plain cups.

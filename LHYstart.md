@@ -249,6 +249,60 @@ python scripts/demo_vision_grasp.py --scenario can --render
 python scripts/demo_vision_grasp.py --scenario cube --render
 ```
 
+### 6.1 Cup/Mug 在线整轮排序 + 抓取演示（当前推荐）
+
+进入 RoboCasa/RL 环境：
+
+```powershell
+conda activate robotic-robocasa-rl
+```
+
+在线 greedy 整轮演示：
+
+```powershell
+python scripts/demo_online_cup_mug_ordering.py --task robocasa/CupMugSorting --policy greedy --layout 1 --style 1 --keep-open-sec 0.2 --save-trace --trace-path outputs/rl_cup_mug_ordering/reports/online-greedy-demo-trace-retreat-cap-pass.json --retry-on-failure-once
+```
+
+说明：
+
+- 这是当前最接近“完整顺序选择 + Vision + 真抓取放置 + MuJoCo 窗口”的入口。
+- 当前稳定策略是：`mug -> sink`，`cup -> right_counter`（分散放置，不叠在同一点），并且放置后的 `safe_retreat` 高度已加顶部上限，避免机械臂向上撞到上柜。
+- 跑完后优先看：
+  - `outputs/rl_cup_mug_ordering/reports/online-greedy-demo-trace-retreat-cap-pass.json`
+- 如果在线流程完整成功，trace 中应出现：
+  - `finished` 包含 `mug_1`, `mug_2`, `cup_1`, `cup_2`, `cup_3`
+  - `failure_reason = null`
+  - `retry_counts = {}`
+
+当前推荐保留的 greedy 参考成功证据：
+
+- `outputs/rl_cup_mug_ordering/reports/online-greedy-demo-trace-retreat-cap-pass.json`
+
+它对应的是当前这轮修复后的真实 5/5 在线可视化成功案例，已经同时包含：
+
+- cup counter 分散放置
+- handle candidate 边界接受放宽
+- later-step handle preposition retry
+- safe retreat 顶部高度上限
+
+如果只想看离线 dry-run 指标：
+
+```powershell
+python scripts/eval_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy greedy --episodes 30 --dry-run
+```
+
+### 6.2 Cup/Mug 在线 RL（当前为 sanity / stub 选序）
+
+```powershell
+python scripts/demo_online_cup_mug_ordering.py --task robocasa/CupMugSorting --policy rl --layout 1 --style 1 --keep-open-sec 0.2 --save-trace --trace-path outputs/rl_cup_mug_ordering/reports/online-rl-demo-trace.json --retry-on-failure-once
+```
+
+说明：
+
+- 这条命令已经接入了和 greedy 相同的 live slot mapping + 真执行链。
+- 但当前 `policy=rl` 仍然是 **RL sanity / stub 选序**，不是训练好的 checkpoint policy。
+- 它适合用来验证“RL 选择接口是否能在同一条在线执行链上工作”，不适合拿来宣称性能优于 greedy。
+
 ---
 
 ## 7. 备注
