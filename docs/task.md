@@ -50,6 +50,7 @@
 - 当前分支：`fix-execution-cleanup-baseline`。
 - 改动范围：`arm/`、`planner/`、`scripts/demo_robocasa_reach_onscreen.py`、`tests/`、`docs/task.md`。
 - 未触碰：`main.py`、正式 `fsm/` IPC 协议、`vision/detected_objects.py` schema。
+- 已完成：新增 `robocasa/CupMugSortingRandom`，复用 5 物体 cup/mug sorting 逻辑，但不再默认固定左水槽 `layout_and_style_ids: [[1, 1]]`，用于随机厨房场景可视化与对比实验。
 
 ### eval/logging
 
@@ -71,6 +72,13 @@
 
 - 已完成：本文件压缩为当前任务看板，避免历史追加项掩盖下一步。
 - 已完成：重写前的旧版 `docs/task.md` 已保留到 `docs/archive/task-2026-05-01-pre-cleanup.md`。
+- 已完成：新增 `scripts/export_vision_pointclouds.py`，可把单帧 RoboCasa RGB-D 导出为 `outputs/vision/...` 下的 RGB、depth、检测 overlay、点云 `.ply`、三平面点云投影视图，以及相机视角点云重投影 / 抓取轴叠加图，便于课程展示和视觉调试。
+- 已完成：`scripts/export_vision_pointclouds.py` 现支持 `CupMugSorting` 多目标导出模式；当 `--target-label` 取 `all` / `drinkware` 时，会在同一套图里同时绘制 cup 与 mug 的点云、候选抓取点和抓取轴。
+- 已完成：`scripts/export_vision_pointclouds.py` 现在对 `CupMugSorting` / `CupMugSortingClean` 自动复用固定左水槽布局，显式传入 `layout_and_style_ids: [[1, 1]]`，避免导出脚本采样到与演示不一致的场景。
+- 已完成：`scripts/export_vision_pointclouds.py` 的环境创建链路已切回与 `scripts/demo_robocasa_reach_onscreen.py` 一致的 `build_env_config() + robosuite.make(...) + get_rgbd()/resolve_camera_config()`，不再使用 `RobocasaEnvWrapper/gym.make` 路径，避免“任务名相同但场景不一致”。
+- 已完成：多目标导出模式现保留原始 DINO bbox 图 `rgb_detection_overlay.png`，并把 cup/mug 抓取叠加单独输出为 `rgb_multi_target_overlay.png`，避免检测结果与抓取结果混在一张图里。
+- 已完成：新增 `configs/tasks/cup_mug_sorting_random.yaml`，并更新相关脚本使 `CupMugSortingRandom` 走同一套 cup/mug 多目标视觉流程，但默认不固定 layout/style。
+- 已完成：从 `outputs/vision/cup_mug_sorting_all/` 挑选一套代表性可视化产物归档到受版本控制的 `docs/artifacts/vision/cup_mug_sorting_all/`，用于评审、汇报和主分支留存，同时保持 `outputs/` 继续作为运行时产物目录。
 - 保留：旧详细背景可继续放入 `docs/archive/` 或独立 design plan；不要再在本看板无限追加长日志。
 
 ## 最近完成阶段
@@ -94,6 +102,10 @@
 - `vision/perception_loop.py`：新增 `handle_top_down` candidate，使用把手点云顶部高度、垂直 outward 的 closing axis、把手厚度投影作为 gripper width。
 - `scripts/demo_robocasa_reach_onscreen.py`：`--grasp-type` 支持 `handle_top_down`，该路径走 orientation-aware top-down reach 后继续 close/lift。
 - `arm/robocasa_primitives.py` / `scripts/demo_robocasa_reach_onscreen.py`：修正 `handle_top_down` 姿态消费约定，让 candidate `closing_axis` 对齐当前 EEF Y 轴，并让 yaw debug 使用同一个闭合轴定义。
+- `scripts/export_vision_pointclouds.py`：新增单帧视觉可视化导出工具，直接复用 `VisionPerceptionLoop` 的真实 bbox 点云和 candidate，输出 `scene/target` 点云三视图、相机平面重投影图、RGB 抓取点与抓取轴叠加图，以及 `.ply` 点云文件。
+- `scripts/export_vision_pointclouds.py`：新增 `CupMugSorting` 多目标模式，复用 `infer_all_targets_with_diagnostics()` 与 `classify_drinkware_targets()`，把 cup 和 mug 同时画进同一张 overlay / 重投影图里。
+- `scripts/export_vision_pointclouds.py`：环境初始化与相机取图现复用 onscreen reach demo 的同一路径，确保视觉导出面对的是同一套 RoboCasa/robosuite 场景配置。
+- `third_party/robocasa/.../cup_mug_sorting.py`：新增 `CupMugSortingRandom` 类；`scripts/demo_robocasa_reach_onscreen.py`、`scripts/demo_multi_cup_mug_sort.py`、`scripts/export_vision_pointclouds.py` 已支持该任务名，并保持随机版不自动固定左水槽布局。
 
 ## 验证记录
 
@@ -125,6 +137,8 @@
 - 已通过：`python -m unittest discover -s tests -p "test_candidate_planner.py"`。
 - 已通过：`python -c "from pathlib import Path; files=['vision/perception_loop.py','arm/robocasa_primitives.py','scripts/demo_robocasa_reach_onscreen.py','tests/test_handle_top_down_candidate.py']; [compile(Path(f).read_text(encoding='utf-8'), f, 'exec') for f in files]; print('syntax ok')"`。
 - 已通过：`python -c "from pathlib import Path; files=['arm/robocasa_primitives.py','scripts/demo_robocasa_reach_onscreen.py','tests/test_robocasa_execution_helpers.py']; [compile(Path(f).read_text(encoding='utf-8'), f, 'exec') for f in files]; print('syntax ok')"`（`handle_top_down` 闭合轴修正后语法校验）。
+- 已通过：`python -c "from pathlib import Path; files=['scripts/export_vision_pointclouds.py']; [compile(Path(f).read_text(encoding='utf-8'), f, 'exec') for f in files]; print('syntax ok')"`。
+- 已通过：`python -c "from pathlib import Path; files=['third_party/robocasa/robocasa/environments/kitchen/composite/organizing_dishes_and_containers/cup_mug_sorting.py','third_party/robocasa/robocasa/__init__.py','scripts/demo_robocasa_reach_onscreen.py','scripts/demo_multi_cup_mug_sort.py','scripts/export_vision_pointclouds.py','tests/test_cup_mug_sorting_scene.py']; [compile(Path(f).read_text(encoding='utf-8'), f, 'exec') for f in files]; print('syntax ok')"`。
 - 未完成：`python -m unittest discover -s tests -p "test_robocasa_execution_helpers.py"` 在本轮被用户中断；需要后续重跑确认完整 helper 单测。
 
 ## 推荐下一步
@@ -198,3 +212,9 @@
 - Completed: renamed `docs/getting-started.md` to `docs/getting_start_cjy.md` and updated `docs/index.md`.
 - Completed: expanded the getting-started guide with current `CupMugSorting` commands, including onscreen cup/mug runs, scene smoke, frame saving, expected JSON fields, fixed `layout_and_style_ids: [[1, 1]]`, and the active grasp path list.
 - Verification: confirmed the old path no longer exists, the new path exists, and `docs/index.md` links to `docs/getting_start_cjy.md`.
+
+## 2026-05-02 RoboCasa Asset Ignore Policy
+
+- Completed: kept the large RoboCasa asset tree out of Git by restoring the asset ignore rules in `third_party/robocasa/.gitignore`.
+- Verification: asset files staged by the interrupted add attempt were removed from the index with `git restore --staged third_party/robocasa/robocasa/models/assets`. `git check-ignore -v` again reports ignore rules for representative `objects`, `textures`, `generative_textures`, and fixture asset paths.
+- Recommended next step: owner group `infra/docs`; goal: document how teammates should obtain local RoboCasa assets without committing the 22GB local asset tree; success criteria: custom `CupMugSorting` code remains tracked while large third-party assets remain local or are managed by an explicit external asset workflow.

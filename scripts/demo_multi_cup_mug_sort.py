@@ -33,6 +33,7 @@ from vision.sorting_policy import classify_drinkware_targets
 
 DEFAULT_LEFT_SINK_LAYOUT_ID = 1
 CUP_MUG_SORTING_TASKS = {"CupMugSorting", "CupMugSortingClean"}
+RANDOM_CUP_MUG_SORTING_TASKS = {"CupMugSortingRandom"}
 
 
 def _load_task_config(path):

@@ -51,6 +51,7 @@ from planner.candidates import choose_reachable_candidate
 
 DEFAULT_LEFT_SINK_LAYOUT_ID = 1
 CUP_MUG_SORTING_TASKS = {"CupMugSorting", "CupMugSortingClean"}
+RANDOM_CUP_MUG_SORTING_TASKS = {"CupMugSortingRandom"}
 
 
 def load_yaml(path):
@@ -511,7 +512,7 @@ def main():
     vision_config["target_labels"] = [args.target_label]
     vision_config["obstacle_labels"] = []
     use_drinkware_classification = (
-        env_name in CUP_MUG_SORTING_TASKS
+        env_name in CUP_MUG_SORTING_TASKS.union(RANDOM_CUP_MUG_SORTING_TASKS)
         and args.target_label.strip().lower() in {"cup", "glass cup", "mug"}
     )
     if use_drinkware_classification:

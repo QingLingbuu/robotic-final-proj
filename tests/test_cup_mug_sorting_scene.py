@@ -51,6 +51,8 @@ class CupMugSortingSceneTests(unittest.TestCase):
         self.assertIn("loc=\"right\"", source)
         self.assertIn("front_edge_y = -0.92", source)
         self.assertIn("np.linspace(-0.55, 0.55, total)", source)
+        self.assertIn("class CupMugSortingRandom(CupMugSorting):", source)
+        self.assertIn('"random_scene"] = True', source)
 
     def test_infer_all_targets_keeps_each_detected_drinkware_object(self):
         class _Detector:

@@ -1,0 +1,35 @@
+task: robocasa/CupMugSortingRandom
+scene_id: cup_mug_sorting_random_layout_style_variable
+fixed_layout:
+  layout_id: random
+  style_id: random
+  seed: optional
+  reason: This variant intentionally does not pin `layout_and_style_ids`, so kitchen layout/style can vary across runs while keeping the same 5-object drinkware sorting task.
+object_count:
+  mugs: 2
+  cups: 3
+plain_cup_object_scale:
+  - 0.75
+  - 0.75
+  - 1.0
+plain_cup_max_size:
+  xy_meters: 0.072
+  reason: Panda top-down gripper opening is about 0.08m, so plain cups must be smaller than the fully-open gripper.
+labels:
+  - mug
+  - cup
+  - glass cup
+sorting:
+  handled_zone: scene_dependent_left_region
+  plain_zone: scene_dependent_right_region
+  handled_strategy: handle_top_down
+  plain_strategy: top_down
+  handled_arm: right
+  plain_arm: left
+verification:
+  smoke_command: python scripts/demo_multi_cup_mug_sort.py --task robocasa/CupMugSortingRandom --keep-open-sec 1
+  success_criteria:
+    - CupMugSortingRandom registers in RoboCasa.
+    - kitchen layout or style can vary across runs unless seed/layout are explicitly pinned.
+    - summary.targets contains multiple drinkware detections when the detector is available.
+    - assignments use handle_top_down for handled mugs and top_down for plain cups.
