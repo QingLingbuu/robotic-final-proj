@@ -171,3 +171,22 @@ class CupMugSortingClean(CupMugSorting):
                 )
             )
         return cfgs
+
+
+class CupMugSortingRandom(CupMugSorting):
+    """
+    Random-layout version of CupMugSorting.
+
+    Keeps the same 5-object drinkware sorting task, but is intended to be used
+    without the repo-level fixed `layout_and_style_ids=[[1, 1]]` pinning so the
+    kitchen scene can vary across runs.
+    """
+
+    def get_ep_meta(self):
+        ep_meta = super().get_ep_meta()
+        ep_meta["lang"] = (
+            "Sort all visible drinkware in a random kitchen layout. "
+            "Use handle-top-down grasps for handled mugs and top-down grasps for plain cups."
+        )
+        ep_meta["cup_mug_sorting"]["random_scene"] = True
+        return ep_meta

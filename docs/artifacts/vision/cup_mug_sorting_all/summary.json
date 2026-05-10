@@ -1,0 +1,2236 @@
+{
+  "task": "robocasa/CupMugSorting",
+  "target_label": "all",
+  "multi_target_mode": true,
+  "camera": {
+    "camera_name": "robot0_agentview_center",
+    "active_camera_name": "robot0_agentview_center",
+    "fx": 579.4112549695428,
+    "fy": 579.4112549695428,
+    "cx": 320.0,
+    "cy": 240.0
+  },
+  "env_config": {
+    "env_name": "CupMugSorting",
+    "robots": "PandaOmron",
+    "controller_configs": {
+      "type": "HYBRID_MOBILE_BASE",
+      "body_parts": {
+        "right": {
+          "type": "OSC_POSE",
+          "input_max": 1,
+          "input_min": -1,
+          "output_max": [
+            0.05,
+            0.05,
+            0.05,
+            0.5,
+            0.5,
+            0.5
+          ],
+          "output_min": [
+            -0.05,
+            -0.05,
+            -0.05,
+            -0.5,
+            -0.5,
+            -0.5
+          ],
+          "kp": 150,
+          "damping_ratio": 1,
+          "impedance_mode": "fixed",
+          "kp_limits": [
+            0,
+            300
+          ],
+          "damping_ratio_limits": [
+            0,
+            10
+          ],
+          "position_limits": null,
+          "orientation_limits": null,
+          "uncouple_pos_ori": true,
+          "input_type": "delta",
+          "input_ref_frame": "base",
+          "interpolation": null,
+          "ramp_ratio": 0.2,
+          "gripper": {
+            "type": "GRIP"
+          }
+        },
+        "torso": {
+          "type": "JOINT_POSITION",
+          "interpolation": "null",
+          "kp": 2000
+        },
+        "base": {
+          "type": "JOINT_VELOCITY_LEGACY",
+          "interpolation": "null"
+        }
+      },
+      "composite_controller_specific_configs": {
+        "body_part_ordering": [
+          "right",
+          "right_gripper",
+          "base",
+          "torso"
+        ]
+      }
+    },
+    "camera_names": [
+      "robot0_agentview_center"
+    ],
+    "camera_widths": [
+      640
+    ],
+    "camera_heights": [
+      480
+    ],
+    "camera_depths": [
+      true
+    ],
+    "has_renderer": true,
+    "has_offscreen_renderer": true,
+    "render_camera": "robot0_frontview",
+    "ignore_done": true,
+    "use_camera_obs": true,
+    "use_object_obs": true,
+    "control_freq": 20,
+    "renderer": "mjviewer",
+    "layout_ids": null,
+    "style_ids": null,
+    "seed": null,
+    "obj_instance_split": null,
+    "layout_and_style_ids": [
+      [
+        1,
+        1
+      ]
+    ],
+    "translucent_robot": true
+  },
+  "raw_detections": [
+    {
+      "label": "mug cup",
+      "score": 0.5055912137031555,
+      "box_xyxy": [
+        374.5766906738281,
+        316.9063415527344,
+        411.5515441894531,
+        373.1671447753906
+      ]
+    },
+    {
+      "label": "mug cup",
+      "score": 0.4754796624183655,
+      "box_xyxy": [
+        591.7802734375,
+        309.07611083984375,
+        631.8358154296875,
+        361.8692932128906
+      ]
+    },
+    {
+      "label": "mug cup cup",
+      "score": 0.5112898349761963,
+      "box_xyxy": [
+        447.33355712890625,
+        324.07403564453125,
+        480.1881103515625,
+        377.787109375
+      ]
+    },
+    {
+      "label": "mug cup",
+      "score": 0.4588157832622528,
+      "box_xyxy": [
+        475.39459228515625,
+        303.8881530761719,
+        528.189453125,
+        361.36016845703125
+      ]
+    },
+    {
+      "label": "mug cup cup",
+      "score": 0.4380545914173126,
+      "box_xyxy": [
+        523.7330322265625,
+        329.30523681640625,
+        562.18359375,
+        387.8252868652344
+      ]
+    },
+    {
+      "label": "glass cup",
+      "score": 0.37017160654067993,
+      "box_xyxy": [
+        323.1337890625,
+        176.78866577148438,
+        363.81402587890625,
+        205.44888305664062
+      ]
+    },
+    {
+      "label": "glass cup",
+      "score": 0.4667104184627533,
+      "box_xyxy": [
+        591.6691284179688,
+        308.877197265625,
+        631.8770751953125,
+        361.7611083984375
+      ]
+    },
+    {
+      "label": "glass cup",
+      "score": 0.4715489149093628,
+      "box_xyxy": [
+        475.27630615234375,
+        303.73675537109375,
+        528.0540161132812,
+        361.29876708984375
+      ]
+    },
+    {
+      "label": "glass cup",
+      "score": 0.40447333455085754,
+      "box_xyxy": [
+        374.5796203613281,
+        316.85784912109375,
+        411.5733337402344,
+        373.0945739746094
+      ]
+    },
+    {
+      "label": "glass cup",
+      "score": 0.4199920892715454,
+      "box_xyxy": [
+        523.6014404296875,
+        329.16082763671875,
+        562.1746826171875,
+        387.7631530761719
+      ]
+    },
+    {
+      "label": "glass cup",
+      "score": 0.38375914096832275,
+      "box_xyxy": [
+        447.33111572265625,
+        323.96636962890625,
+        480.1385192871094,
+        377.65838623046875
+      ]
+    }
+  ],
+  "payload": {
+    "target": {
+      "label": "drinkware",
+      "pos": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "conf": 1.0
+    },
+    "grasp_candidates": [],
+    "obstacles": [],
+    "status": "ready"
+  },
+  "diagnostics": {
+    "multi_target": {
+      "status": "ready",
+      "targets": [
+        {
+          "label": "glass cup",
+          "pos": [
+            2.22434393717919,
+            -0.5312797152205577,
+            1.00957783166419
+          ],
+          "conf": 0.4715489149093628,
+          "grasp_candidates": [
+            {
+              "id": 1,
+              "pos": [
+                2.213362958123355,
+                -0.525308854924047,
+                1.0014460603063695
+              ],
+              "orientation": [
+                [
+                  1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              "gripper_width": 0.08,
+              "score": 0.2362982400098826,
+              "grasp_type": "top_down"
+            },
+            {
+              "id": 2,
+              "pos": [
+                2.2777716301262054,
+                -0.5871442063811295,
+                0.9887067626739037
+              ],
+              "orientation": [
+                [
+                  0.713241493971563,
+                  -0.7009183770434422,
+                  0.0
+                ],
+                [
+                  -0.7009183770434422,
+                  -0.713241493971563,
+                  -0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              "gripper_width": 0.02149515108273902,
+              "score": 0.31440972890298324,
+              "grasp_type": "handle_top_down"
+            }
+          ],
+          "diagnostics": {
+            "2": {
+              "grasp_type": "handle_top_down",
+              "point_cloud_count": 3812,
+              "candidate_point_cloud_count": 3812,
+              "handle_point_count": 137,
+              "handle_ratio": 0.035939139559286466,
+              "radial_center_xy": [
+                2.213362958123355,
+                -0.525308854924047
+              ],
+              "body_center_xy": [
+                2.213362958123355,
+                -0.525308854924047
+              ],
+              "body_center_source": "body_model_inlier_median_from_top_surface_mean",
+              "handle_center": [
+                2.2777716301262054,
+                -0.5871442063811295,
+                0.9845236712894236
+              ],
+              "grasp_xy": [
+                2.2777716301262054,
+                -0.5871442063811295
+              ],
+              "grasp_xy_source": "handle_point_cloud_center",
+              "handle_direction_center_xy": [
+                2.281572937040823,
+                -0.5923403276090969
+              ],
+              "handle_direction_source": "handle_tail_outer_points",
+              "handle_tail_point_count": 35,
+              "handle_tail_distance_threshold": 0.09312321576137432,
+              "outward_axis_xy": [
+                0.713241493971563,
+                -0.7009183770434422
+              ],
+              "radial_body": 0.047689738491167824,
+              "radial_threshold": 0.04576730386837587,
+              "max_handle_radial": 0.11268973849116783,
+              "handle_z_floor": 0.9529386868222123,
+              "z_low": 0.9215793912724999,
+              "z_high": 1.0111773785573925,
+              "top_z": 0.9887067626739037,
+              "top_surface_quality": 0.40145985401459855,
+              "mean_handle_radial": 0.08929940140661011,
+              "protrusion_strength": 0.08928654836531479,
+              "protrusion_quality": 0.6518346976668066,
+              "thickness": 0.01349515108273902,
+              "thickness_quality": 0.7165050360913008,
+              "estimated_width": 0.02149515108273902,
+              "selected_width": 0.02149515108273902,
+              "approach_axis": [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              "closing_axis": [
+                0.713241493971563,
+                -0.7009183770434422,
+                0.0
+              ],
+              "orientation_source": "handle_tail_outward_radial",
+              "lateral_axis": [
+                -0.7009183770434422,
+                -0.713241493971563,
+                -0.0
+              ],
+              "used_handle_side_cloud": false,
+              "residual_point_count": 1061,
+              "residual_sector_center_deg": -48.75000000000002,
+              "residual_sector_score": 0.07867477199086054,
+              "residual_sector_mean_radial": 0.08929940140661011,
+              "residual_sector_median_z": 0.9838698328582186,
+              "residual_sector_z_quality": 0.5311099050207844,
+              "residual_sector_point_count": 137,
+              "handle_point_source": "body_model_residual_cluster",
+              "bbox_side_band": "right"
+            },
+            "target_bbox": {
+              "raw_xyxy": [
+                475,
+                303,
+                529,
+                362
+              ],
+              "padded_xyxy": [
+                467,
+                295,
+                536,
+                370
+              ],
+              "padding_fraction": 0.15,
+              "image_shape_hw": [
+                480,
+                640
+              ],
+              "foreground_depth_filter": {
+                "valid_depth_count": 5320,
+                "foreground_depth_count": 3812,
+                "depth_jump_threshold": 0.04374458577052909,
+                "seed_depth": 1.1897336276645993
+              }
+            }
+          }
+        },
+        {
+          "label": "glass cup",
+          "pos": [
+            2.4495018330135983,
+            -0.5288785292659319,
+            1.0057418767655506
+          ],
+          "conf": 0.4667104184627533,
+          "grasp_candidates": [
+            {
+              "id": 1,
+              "pos": [
+                2.4612810034034576,
+                -0.5006840417038232,
+                0.9914559331609577
+              ],
+              "orientation": [
+                [
+                  1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              "gripper_width": 0.075,
+              "score": 0.2326422541579371,
+              "grasp_type": "top_down"
+            },
+            {
+              "id": 2,
+              "pos": [
+                2.4441396561827413,
+                -0.526099697304528,
+                1.0072356317380706
+              ],
+              "orientation": [
+                [
+                  -0.5188519523049566,
+                  -0.854864112938036,
+                  0.0
+                ],
+                [
+                  -0.854864112938036,
+                  0.5188519523049566,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              "gripper_width": 0.015,
+              "score": 0.290163243439911,
+              "grasp_type": "handle_top_down"
+            }
+          ],
+          "diagnostics": {
+            "2": {
+              "grasp_type": "handle_top_down",
+              "point_cloud_count": 2613,
+              "candidate_point_cloud_count": 2613,
+              "handle_point_count": 20,
+              "handle_ratio": 0.007654037504783774,
+              "radial_center_xy": [
+                2.4612810034034576,
+                -0.5006840417038232
+              ],
+              "body_center_xy": [
+                2.4612810034034576,
+                -0.5006840417038232
+              ],
+              "body_center_source": "body_model_inlier_median_from_top_surface_mean",
+              "handle_center": [
+                2.4441396561827413,
+                -0.526099697304528,
+                1.0056131370886072
+              ],
+              "grasp_xy": [
+                2.4441396561827413,
+                -0.526099697304528
+              ],
+              "grasp_xy_source": "handle_point_cloud_center",
+              "handle_direction_center_xy": [
+                2.4450555520939696,
+                -0.5274172089957374
+              ],
+              "handle_direction_source": "handle_tail_outer_points",
+              "handle_tail_point_count": 5,
+              "handle_tail_distance_threshold": 0.031112202729611963,
+              "outward_axis_xy": [
+                -0.5188519523049566,
+                -0.854864112938036
+              ],
+              "radial_body": 0.02668719361945213,
+              "radial_threshold": 0.030015395214589097,
+              "max_handle_radial": 0.09168719361945213,
+              "handle_z_floor": 0.9532864467372171,
+              "z_low": 0.9215516418788253,
+              "z_high": 1.0122225129028017,
+              "top_z": 1.0072356317380706,
+              "top_surface_quality": 0.4,
+              "mean_handle_radial": 0.030744568535776524,
+              "protrusion_strength": 0.03065585317936518,
+              "protrusion_quality": 0.5345952176503427,
+              "thickness": 0.001146452231451378,
+              "thickness_quality": 0.5,
+              "estimated_width": 0.015,
+              "selected_width": 0.015,
+              "approach_axis": [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              "closing_axis": [
+                -0.5188519523049566,
+                -0.854864112938036,
+                0.0
+              ],
+              "orientation_source": "handle_tail_outward_radial",
+              "lateral_axis": [
+                -0.854864112938036,
+                0.5188519523049566,
+                0.0
+              ],
+              "used_handle_side_cloud": false,
+              "residual_point_count": 89,
+              "residual_sector_center_deg": -123.75000000000001,
+              "residual_sector_score": 0.033086246989302466,
+              "residual_sector_mean_radial": 0.030744568535776524,
+              "residual_sector_median_z": 1.0056466542714626,
+              "residual_sector_z_quality": 0.8884238623449376,
+              "residual_sector_point_count": 20,
+              "handle_point_source": "body_model_residual_cluster",
+              "bbox_side_band": "right"
+            },
+            "target_bbox": {
+              "raw_xyxy": [
+                591,
+                308,
+                632,
+                362
+              ],
+              "padded_xyxy": [
+                585,
+                300,
+                638,
+                370
+              ],
+              "padding_fraction": 0.15,
+              "image_shape_hw": [
+                480,
+                640
+              ],
+              "foreground_depth_filter": {
+                "valid_depth_count": 3834,
+                "foreground_depth_count": 2613,
+                "depth_jump_threshold": 0.03746096044513518,
+                "seed_depth": 1.1885840883799583
+              }
+            }
+          }
+        },
+        {
+          "label": "glass cup",
+          "pos": [
+            2.289822395994636,
+            -0.5989133029069813,
+            1.007091607326567
+          ],
+          "conf": 0.4199920892715454,
+          "grasp_candidates": [
+            {
+              "id": 1,
+              "pos": [
+                2.298946220604264,
+                -0.5747920788476678,
+                1.0014546872073862
+              ],
+              "orientation": [
+                [
+                  1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              "gripper_width": 0.075,
+              "score": 0.20955042186990228,
+              "grasp_type": "top_down"
+            }
+          ],
+          "diagnostics": {
+            "2": {
+              "grasp_type": "handle_top_down",
+              "rejected": true,
+              "reject_reason": "insufficient_body_residual_points",
+              "point_cloud_count": 2622,
+              "candidate_point_cloud_count": 2622,
+              "handle_point_count": 0,
+              "body_center_xy": [
+                2.298946220604264,
+                -0.5747920788476678
+              ],
+              "radial_body": 0.024854551163951088,
+              "radial_threshold": 0.028640913372963317,
+              "max_handle_radial": 0.0898545511639511,
+              "handle_z_floor": 0.9561203085871333,
+              "z_low": 0.9214777642857652,
+              "z_high": 1.020456462289674,
+              "used_handle_side_cloud": false,
+              "handle_point_source": "body_model_residual_cluster"
+            },
+            "target_bbox": {
+              "raw_xyxy": [
+                523,
+                329,
+                563,
+                388
+              ],
+              "padded_xyxy": [
+                517,
+                320,
+                568,
+                397
+              ],
+              "padding_fraction": 0.15,
+              "image_shape_hw": [
+                480,
+                640
+              ],
+              "foreground_depth_filter": {
+                "valid_depth_count": 4056,
+                "foreground_depth_count": 2622,
+                "depth_jump_threshold": 0.03156419176664664,
+                "seed_depth": 1.1352136105136752
+              }
+            }
+          }
+        },
+        {
+          "label": "glass cup",
+          "pos": [
+            2.0002520221276954,
+            -0.5638835654623158,
+            1.0000389220486436
+          ],
+          "conf": 0.40447333455085754,
+          "grasp_candidates": [
+            {
+              "id": 1,
+              "pos": [
+                2.0036690120573786,
+                -0.5286293161161182,
+                0.9775225041146302
+              ],
+              "orientation": [
+                [
+                  1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              "gripper_width": 0.08,
+              "score": 0.2015635378345243,
+              "grasp_type": "top_down"
+            }
+          ],
+          "diagnostics": {
+            "2": {
+              "grasp_type": "handle_top_down",
+              "rejected": true,
+              "reject_reason": "insufficient_body_residual_points",
+              "point_cloud_count": 2636,
+              "candidate_point_cloud_count": 2636,
+              "handle_point_count": 7,
+              "body_center_xy": [
+                2.0036690120573786,
+                -0.5286293161161182
+              ],
+              "radial_body": 0.0353535777184647,
+              "radial_threshold": 0.03651518328884853,
+              "max_handle_radial": 0.1003535777184647,
+              "handle_z_floor": 0.9487409919861928,
+              "z_low": 0.921522928264576,
+              "z_high": 0.9992888246120523,
+              "used_handle_side_cloud": false,
+              "handle_point_source": "body_model_residual_cluster"
+            },
+            "target_bbox": {
+              "raw_xyxy": [
+                374,
+                316,
+                412,
+                374
+              ],
+              "padded_xyxy": [
+                369,
+                308,
+                418,
+                382
+              ],
+              "padding_fraction": 0.15,
+              "image_shape_hw": [
+                480,
+                640
+              ],
+              "foreground_depth_filter": {
+                "valid_depth_count": 3750,
+                "foreground_depth_count": 2636,
+                "depth_jump_threshold": 0.02986917697812602,
+                "seed_depth": 1.175835793358874
+              }
+            }
+          }
+        },
+        {
+          "label": "glass cup",
+          "pos": [
+            2.1375400474116466,
+            -0.5860085352855464,
+            1.010301493693253
+          ],
+          "conf": 0.38375914096832275,
+          "grasp_candidates": [
+            {
+              "id": 1,
+              "pos": [
+                2.14198119680308,
+                -0.5543593832632959,
+                0.9914102810292819
+              ],
+              "orientation": [
+                [
+                  1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              "gripper_width": 0.075,
+              "score": 0.19090307038887241,
+              "grasp_type": "top_down"
+            },
+            {
+              "id": 2,
+              "pos": [
+                2.1399398416474145,
+                -0.584789878254131,
+                1.0035929406444248
+              ],
+              "orientation": [
+                [
+                  -0.07646999130465305,
+                  -0.9970718832811737,
+                  0.0
+                ],
+                [
+                  -0.9970718832811737,
+                  0.07646999130465305,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              "gripper_width": 0.015,
+              "score": 0.24123450717750325,
+              "grasp_type": "handle_top_down"
+            }
+          ],
+          "diagnostics": {
+            "2": {
+              "grasp_type": "handle_top_down",
+              "point_cloud_count": 1878,
+              "candidate_point_cloud_count": 1878,
+              "handle_point_count": 50,
+              "handle_ratio": 0.026624068157614485,
+              "radial_center_xy": [
+                2.14198119680308,
+                -0.5543593832632959
+              ],
+              "body_center_xy": [
+                2.14198119680308,
+                -0.5543593832632959
+              ],
+              "body_center_source": "body_model_inlier_median_from_top_surface_mean",
+              "handle_center": [
+                2.1399398416474145,
+                -0.584789878254131,
+                0.9990197386997973
+              ],
+              "grasp_xy": [
+                2.1399398416474145,
+                -0.584789878254131
+              ],
+              "grasp_xy_source": "handle_point_cloud_center",
+              "handle_direction_center_xy": [
+                2.1395292766056215,
+                -0.5863293187533536
+              ],
+              "handle_direction_source": "handle_tail_outer_points",
+              "handle_tail_point_count": 13,
+              "handle_tail_distance_threshold": 0.031676897734053605,
+              "outward_axis_xy": [
+                -0.07646999130465304,
+                -0.9970718832811736
+              ],
+              "radial_body": 0.02443040764018306,
+              "radial_threshold": 0.028322805730137297,
+              "max_handle_radial": 0.08943040764018306,
+              "handle_z_floor": 0.9547586367323102,
+              "z_low": 0.9214993399100799,
+              "z_high": 1.0165259022593092,
+              "top_z": 1.0035929406444248,
+              "top_surface_quality": 0.4,
+              "mean_handle_radial": 0.03058542062669066,
+              "protrusion_strength": 0.030498887787242333,
+              "protrusion_quality": 0.5552289051046131,
+              "thickness": 0.0035135489646556106,
+              "thickness_quality": 0.5,
+              "estimated_width": 0.015,
+              "selected_width": 0.015,
+              "approach_axis": [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              "closing_axis": [
+                -0.07646999130465305,
+                -0.9970718832811737,
+                0.0
+              ],
+              "orientation_source": "handle_tail_outward_radial",
+              "lateral_axis": [
+                -0.9970718832811737,
+                0.07646999130465305,
+                0.0
+              ],
+              "used_handle_side_cloud": false,
+              "residual_point_count": 281,
+              "residual_sector_center_deg": -93.75000000000001,
+              "residual_sector_score": 0.030838131616462962,
+              "residual_sector_mean_radial": 0.03058542062669066,
+              "residual_sector_median_z": 1.0002599842977167,
+              "residual_sector_z_quality": 0.7366579559122214,
+              "residual_sector_point_count": 50,
+              "handle_point_source": "body_model_residual_cluster",
+              "bbox_side_band": "right"
+            },
+            "target_bbox": {
+              "raw_xyxy": [
+                447,
+                323,
+                481,
+                378
+              ],
+              "padded_xyxy": [
+                442,
+                315,
+                486,
+                386
+              ],
+              "padding_fraction": 0.15,
+              "image_shape_hw": [
+                480,
+                640
+              ],
+              "foreground_depth_filter": {
+                "valid_depth_count": 3240,
+                "foreground_depth_count": 1878,
+                "depth_jump_threshold": 0.025,
+                "seed_depth": 1.1461146142040606
+              }
+            }
+          }
+        },
+        {
+          "label": "glass cup",
+          "pos": [
+            1.8921042452944727,
+            -0.5924847483964226,
+            1.375021554335967
+          ],
+          "conf": 0.37017160654067993,
+          "grasp_candidates": [
+            {
+              "id": 1,
+              "pos": [
+                1.8845475305726438,
+                -0.5790028341375525,
+                1.3538034210594192
+              ],
+              "orientation": [
+                [
+                  1.0,
+                  0.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  1.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              "gripper_width": 0.075,
+              "score": 0.1838607542040924,
+              "grasp_type": "top_down"
+            },
+            {
+              "id": 2,
+              "pos": [
+                1.9251216723659563,
+                -0.6002041490561921,
+                1.3746352599299083
+              ],
+              "orientation": [
+                [
+                  0.8776451111038984,
+                  -0.4793110252804809,
+                  0.0
+                ],
+                [
+                  -0.4793110252804809,
+                  -0.8776451111038984,
+                  -0.0
+                ],
+                [
+                  0.0,
+                  0.0,
+                  -1.0
+                ]
+              ],
+              "gripper_width": 0.030591049317456147,
+              "score": 0.25691973268321405,
+              "grasp_type": "handle_top_down"
+            }
+          ],
+          "diagnostics": {
+            "2": {
+              "grasp_type": "handle_top_down",
+              "point_cloud_count": 1732,
+              "candidate_point_cloud_count": 1732,
+              "handle_point_count": 83,
+              "handle_ratio": 0.04792147806004619,
+              "radial_center_xy": [
+                1.8845475305726438,
+                -0.5790028341375525
+              ],
+              "body_center_xy": [
+                1.8845475305726438,
+                -0.5790028341375525
+              ],
+              "body_center_source": "body_model_inlier_median_from_top_surface_mean",
+              "handle_center": [
+                1.9251216723659563,
+                -0.6002041490561921,
+                1.3734395752354456
+              ],
+              "grasp_xy": [
+                1.9251216723659563,
+                -0.6002041490561921
+              ],
+              "grasp_xy_source": "handle_point_cloud_center",
+              "handle_direction_center_xy": [
+                1.93308966384924,
+                -0.6055132987612798
+              ],
+              "handle_direction_source": "handle_tail_outer_points",
+              "handle_tail_point_count": 21,
+              "handle_tail_distance_threshold": 0.052317231223096804,
+              "outward_axis_xy": [
+                0.8776451111038984,
+                -0.4793110252804809
+              ],
+              "radial_body": 0.025244924194502333,
+              "radial_threshold": 0.02893369314587675,
+              "max_handle_radial": 0.09024492419450234,
+              "handle_z_floor": 1.368940668136272,
+              "z_low": 1.3631987297519816,
+              "z_high": 1.379604267992811,
+              "top_z": 1.3746352599299083,
+              "top_surface_quality": 0.39759036144578314,
+              "mean_handle_radial": 0.0459139410292698,
+              "protrusion_strength": 0.04577943573858423,
+              "protrusion_quality": 0.6445505630906105,
+              "thickness": 0.022591049317456147,
+              "thickness_quality": 0.9802983560847951,
+              "estimated_width": 0.030591049317456147,
+              "selected_width": 0.030591049317456147,
+              "approach_axis": [
+                0.0,
+                0.0,
+                -1.0
+              ],
+              "closing_axis": [
+                0.8776451111038984,
+                -0.4793110252804809,
+                0.0
+              ],
+              "orientation_source": "handle_tail_outward_radial",
+              "lateral_axis": [
+                -0.4793110252804809,
+                -0.8776451111038984,
+                -0.0
+              ],
+              "used_handle_side_cloud": false,
+              "residual_point_count": 316,
+              "residual_sector_center_deg": -26.25000000000002,
+              "residual_sector_score": 0.042708785396914604,
+              "residual_sector_mean_radial": 0.0459139410292698,
+              "residual_sector_median_z": 1.37407277951347,
+              "residual_sector_z_quality": 0.4812738143067982,
+              "residual_sector_point_count": 83,
+              "handle_point_source": "body_model_residual_cluster",
+              "bbox_side_band": "right"
+            },
+            "target_bbox": {
+              "raw_xyxy": [
+                323,
+                176,
+                364,
+                206
+              ],
+              "padded_xyxy": [
+                317,
+                172,
+                370,
+                210
+              ],
+              "padding_fraction": 0.15,
+              "image_shape_hw": [
+                480,
+                640
+              ],
+              "foreground_depth_filter": {
+                "valid_depth_count": 2106,
+                "foreground_depth_count": 1732,
+                "depth_jump_threshold": 0.025,
+                "seed_depth": 0.9402413899265227
+              }
+            }
+          }
+        }
+      ]
+    },
+    "assignments": [
+      {
+        "object_index": 1,
+        "label": "glass cup",
+        "conf": 0.4715489149093628,
+        "pos": [
+          2.22434393717919,
+          -0.5312797152205577,
+          1.00957783166419
+        ],
+        "has_handle": true,
+        "strategy": "handle_top_down",
+        "arm": "right",
+        "sim_object_name": null,
+        "sim_metadata_distance_xy": null,
+        "candidate_id": 2,
+        "candidate_score": 0.31440972890298324,
+        "raw_handle_top_down_score": 0.31440972890298324,
+        "handle_top_down_min_score": 0.3
+      },
+      {
+        "object_index": 2,
+        "label": "glass cup",
+        "conf": 0.4667104184627533,
+        "pos": [
+          2.4495018330135983,
+          -0.5288785292659319,
+          1.0057418767655506
+        ],
+        "has_handle": false,
+        "strategy": "top_down",
+        "arm": "left",
+        "sim_object_name": null,
+        "sim_metadata_distance_xy": null,
+        "candidate_id": 1,
+        "candidate_score": 0.2326422541579371,
+        "raw_handle_top_down_score": 0.290163243439911,
+        "handle_top_down_min_score": 0.3
+      },
+      {
+        "object_index": 3,
+        "label": "glass cup",
+        "conf": 0.4199920892715454,
+        "pos": [
+          2.289822395994636,
+          -0.5989133029069813,
+          1.007091607326567
+        ],
+        "has_handle": false,
+        "strategy": "top_down",
+        "arm": "left",
+        "sim_object_name": null,
+        "sim_metadata_distance_xy": null,
+        "candidate_id": 1,
+        "candidate_score": 0.20955042186990228,
+        "raw_handle_top_down_score": null,
+        "handle_top_down_min_score": 0.3
+      },
+      {
+        "object_index": 4,
+        "label": "glass cup",
+        "conf": 0.40447333455085754,
+        "pos": [
+          2.0002520221276954,
+          -0.5638835654623158,
+          1.0000389220486436
+        ],
+        "has_handle": false,
+        "strategy": "top_down",
+        "arm": "left",
+        "sim_object_name": null,
+        "sim_metadata_distance_xy": null,
+        "candidate_id": 1,
+        "candidate_score": 0.2015635378345243,
+        "raw_handle_top_down_score": null,
+        "handle_top_down_min_score": 0.3
+      },
+      {
+        "object_index": 5,
+        "label": "glass cup",
+        "conf": 0.38375914096832275,
+        "pos": [
+          2.1375400474116466,
+          -0.5860085352855464,
+          1.010301493693253
+        ],
+        "has_handle": true,
+        "strategy": "handle_top_down",
+        "arm": "right",
+        "sim_object_name": null,
+        "sim_metadata_distance_xy": null,
+        "candidate_id": 2,
+        "candidate_score": 0.24123450717750325,
+        "raw_handle_top_down_score": 0.24123450717750325,
+        "handle_top_down_min_score": 0.3
+      },
+      {
+        "object_index": 6,
+        "label": "glass cup",
+        "conf": 0.37017160654067993,
+        "pos": [
+          1.8921042452944727,
+          -0.5924847483964226,
+          1.375021554335967
+        ],
+        "has_handle": true,
+        "strategy": "handle_top_down",
+        "arm": "right",
+        "sim_object_name": null,
+        "sim_metadata_distance_xy": null,
+        "candidate_id": 2,
+        "candidate_score": 0.25691973268321405,
+        "raw_handle_top_down_score": 0.25691973268321405,
+        "handle_top_down_min_score": 0.3
+      }
+    ]
+  },
+  "multi_target_exports": [
+    {
+      "target": {
+        "label": "glass cup",
+        "pos": [
+          2.22434393717919,
+          -0.5312797152205577,
+          1.00957783166419
+        ],
+        "conf": 0.4715489149093628,
+        "grasp_candidates": [
+          {
+            "id": 1,
+            "pos": [
+              2.213362958123355,
+              -0.525308854924047,
+              1.0014460603063695
+            ],
+            "orientation": [
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ]
+            ],
+            "gripper_width": 0.08,
+            "score": 0.2362982400098826,
+            "grasp_type": "top_down"
+          },
+          {
+            "id": 2,
+            "pos": [
+              2.2777716301262054,
+              -0.5871442063811295,
+              0.9887067626739037
+            ],
+            "orientation": [
+              [
+                0.713241493971563,
+                -0.7009183770434422,
+                0.0
+              ],
+              [
+                -0.7009183770434422,
+                -0.713241493971563,
+                -0.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ]
+            ],
+            "gripper_width": 0.02149515108273902,
+            "score": 0.31440972890298324,
+            "grasp_type": "handle_top_down"
+          }
+        ],
+        "diagnostics": {
+          "2": {
+            "grasp_type": "handle_top_down",
+            "point_cloud_count": 3812,
+            "candidate_point_cloud_count": 3812,
+            "handle_point_count": 137,
+            "handle_ratio": 0.035939139559286466,
+            "radial_center_xy": [
+              2.213362958123355,
+              -0.525308854924047
+            ],
+            "body_center_xy": [
+              2.213362958123355,
+              -0.525308854924047
+            ],
+            "body_center_source": "body_model_inlier_median_from_top_surface_mean",
+            "handle_center": [
+              2.2777716301262054,
+              -0.5871442063811295,
+              0.9845236712894236
+            ],
+            "grasp_xy": [
+              2.2777716301262054,
+              -0.5871442063811295
+            ],
+            "grasp_xy_source": "handle_point_cloud_center",
+            "handle_direction_center_xy": [
+              2.281572937040823,
+              -0.5923403276090969
+            ],
+            "handle_direction_source": "handle_tail_outer_points",
+            "handle_tail_point_count": 35,
+            "handle_tail_distance_threshold": 0.09312321576137432,
+            "outward_axis_xy": [
+              0.713241493971563,
+              -0.7009183770434422
+            ],
+            "radial_body": 0.047689738491167824,
+            "radial_threshold": 0.04576730386837587,
+            "max_handle_radial": 0.11268973849116783,
+            "handle_z_floor": 0.9529386868222123,
+            "z_low": 0.9215793912724999,
+            "z_high": 1.0111773785573925,
+            "top_z": 0.9887067626739037,
+            "top_surface_quality": 0.40145985401459855,
+            "mean_handle_radial": 0.08929940140661011,
+            "protrusion_strength": 0.08928654836531479,
+            "protrusion_quality": 0.6518346976668066,
+            "thickness": 0.01349515108273902,
+            "thickness_quality": 0.7165050360913008,
+            "estimated_width": 0.02149515108273902,
+            "selected_width": 0.02149515108273902,
+            "approach_axis": [
+              0.0,
+              0.0,
+              -1.0
+            ],
+            "closing_axis": [
+              0.713241493971563,
+              -0.7009183770434422,
+              0.0
+            ],
+            "orientation_source": "handle_tail_outward_radial",
+            "lateral_axis": [
+              -0.7009183770434422,
+              -0.713241493971563,
+              -0.0
+            ],
+            "used_handle_side_cloud": false,
+            "residual_point_count": 1061,
+            "residual_sector_center_deg": -48.75000000000002,
+            "residual_sector_score": 0.07867477199086054,
+            "residual_sector_mean_radial": 0.08929940140661011,
+            "residual_sector_median_z": 0.9838698328582186,
+            "residual_sector_z_quality": 0.5311099050207844,
+            "residual_sector_point_count": 137,
+            "handle_point_source": "body_model_residual_cluster",
+            "bbox_side_band": "right"
+          },
+          "target_bbox": {
+            "raw_xyxy": [
+              475,
+              303,
+              529,
+              362
+            ],
+            "padded_xyxy": [
+              467,
+              295,
+              536,
+              370
+            ],
+            "padding_fraction": 0.15,
+            "image_shape_hw": [
+              480,
+              640
+            ],
+            "foreground_depth_filter": {
+              "valid_depth_count": 5320,
+              "foreground_depth_count": 3812,
+              "depth_jump_threshold": 0.04374458577052909,
+              "seed_depth": 1.1897336276645993
+            }
+          }
+        }
+      },
+      "assignment": {
+        "object_index": 1,
+        "label": "glass cup",
+        "conf": 0.4715489149093628,
+        "pos": [
+          2.22434393717919,
+          -0.5312797152205577,
+          1.00957783166419
+        ],
+        "has_handle": true,
+        "strategy": "handle_top_down",
+        "arm": "right",
+        "sim_object_name": null,
+        "sim_metadata_distance_xy": null,
+        "candidate_id": 2,
+        "candidate_score": 0.31440972890298324,
+        "raw_handle_top_down_score": 0.31440972890298324,
+        "handle_top_down_min_score": 0.3
+      },
+      "point_cloud_count": 3812,
+      "handle_point_cloud_count": 993
+    },
+    {
+      "target": {
+        "label": "glass cup",
+        "pos": [
+          2.4495018330135983,
+          -0.5288785292659319,
+          1.0057418767655506
+        ],
+        "conf": 0.4667104184627533,
+        "grasp_candidates": [
+          {
+            "id": 1,
+            "pos": [
+              2.4612810034034576,
+              -0.5006840417038232,
+              0.9914559331609577
+            ],
+            "orientation": [
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ]
+            ],
+            "gripper_width": 0.075,
+            "score": 0.2326422541579371,
+            "grasp_type": "top_down"
+          },
+          {
+            "id": 2,
+            "pos": [
+              2.4441396561827413,
+              -0.526099697304528,
+              1.0072356317380706
+            ],
+            "orientation": [
+              [
+                -0.5188519523049566,
+                -0.854864112938036,
+                0.0
+              ],
+              [
+                -0.854864112938036,
+                0.5188519523049566,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ]
+            ],
+            "gripper_width": 0.015,
+            "score": 0.290163243439911,
+            "grasp_type": "handle_top_down"
+          }
+        ],
+        "diagnostics": {
+          "2": {
+            "grasp_type": "handle_top_down",
+            "point_cloud_count": 2613,
+            "candidate_point_cloud_count": 2613,
+            "handle_point_count": 20,
+            "handle_ratio": 0.007654037504783774,
+            "radial_center_xy": [
+              2.4612810034034576,
+              -0.5006840417038232
+            ],
+            "body_center_xy": [
+              2.4612810034034576,
+              -0.5006840417038232
+            ],
+            "body_center_source": "body_model_inlier_median_from_top_surface_mean",
+            "handle_center": [
+              2.4441396561827413,
+              -0.526099697304528,
+              1.0056131370886072
+            ],
+            "grasp_xy": [
+              2.4441396561827413,
+              -0.526099697304528
+            ],
+            "grasp_xy_source": "handle_point_cloud_center",
+            "handle_direction_center_xy": [
+              2.4450555520939696,
+              -0.5274172089957374
+            ],
+            "handle_direction_source": "handle_tail_outer_points",
+            "handle_tail_point_count": 5,
+            "handle_tail_distance_threshold": 0.031112202729611963,
+            "outward_axis_xy": [
+              -0.5188519523049566,
+              -0.854864112938036
+            ],
+            "radial_body": 0.02668719361945213,
+            "radial_threshold": 0.030015395214589097,
+            "max_handle_radial": 0.09168719361945213,
+            "handle_z_floor": 0.9532864467372171,
+            "z_low": 0.9215516418788253,
+            "z_high": 1.0122225129028017,
+            "top_z": 1.0072356317380706,
+            "top_surface_quality": 0.4,
+            "mean_handle_radial": 0.030744568535776524,
+            "protrusion_strength": 0.03065585317936518,
+            "protrusion_quality": 0.5345952176503427,
+            "thickness": 0.001146452231451378,
+            "thickness_quality": 0.5,
+            "estimated_width": 0.015,
+            "selected_width": 0.015,
+            "approach_axis": [
+              0.0,
+              0.0,
+              -1.0
+            ],
+            "closing_axis": [
+              -0.5188519523049566,
+              -0.854864112938036,
+              0.0
+            ],
+            "orientation_source": "handle_tail_outward_radial",
+            "lateral_axis": [
+              -0.854864112938036,
+              0.5188519523049566,
+              0.0
+            ],
+            "used_handle_side_cloud": false,
+            "residual_point_count": 89,
+            "residual_sector_center_deg": -123.75000000000001,
+            "residual_sector_score": 0.033086246989302466,
+            "residual_sector_mean_radial": 0.030744568535776524,
+            "residual_sector_median_z": 1.0056466542714626,
+            "residual_sector_z_quality": 0.8884238623449376,
+            "residual_sector_point_count": 20,
+            "handle_point_source": "body_model_residual_cluster",
+            "bbox_side_band": "right"
+          },
+          "target_bbox": {
+            "raw_xyxy": [
+              591,
+              308,
+              632,
+              362
+            ],
+            "padded_xyxy": [
+              585,
+              300,
+              638,
+              370
+            ],
+            "padding_fraction": 0.15,
+            "image_shape_hw": [
+              480,
+              640
+            ],
+            "foreground_depth_filter": {
+              "valid_depth_count": 3834,
+              "foreground_depth_count": 2613,
+              "depth_jump_threshold": 0.03746096044513518,
+              "seed_depth": 1.1885840883799583
+            }
+          }
+        }
+      },
+      "assignment": {
+        "object_index": 2,
+        "label": "glass cup",
+        "conf": 0.4667104184627533,
+        "pos": [
+          2.4495018330135983,
+          -0.5288785292659319,
+          1.0057418767655506
+        ],
+        "has_handle": false,
+        "strategy": "top_down",
+        "arm": "left",
+        "sim_object_name": null,
+        "sim_metadata_distance_xy": null,
+        "candidate_id": 1,
+        "candidate_score": 0.2326422541579371,
+        "raw_handle_top_down_score": 0.290163243439911,
+        "handle_top_down_min_score": 0.3
+      },
+      "point_cloud_count": 2613,
+      "handle_point_cloud_count": 905
+    },
+    {
+      "target": {
+        "label": "glass cup",
+        "pos": [
+          2.289822395994636,
+          -0.5989133029069813,
+          1.007091607326567
+        ],
+        "conf": 0.4199920892715454,
+        "grasp_candidates": [
+          {
+            "id": 1,
+            "pos": [
+              2.298946220604264,
+              -0.5747920788476678,
+              1.0014546872073862
+            ],
+            "orientation": [
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ]
+            ],
+            "gripper_width": 0.075,
+            "score": 0.20955042186990228,
+            "grasp_type": "top_down"
+          }
+        ],
+        "diagnostics": {
+          "2": {
+            "grasp_type": "handle_top_down",
+            "rejected": true,
+            "reject_reason": "insufficient_body_residual_points",
+            "point_cloud_count": 2622,
+            "candidate_point_cloud_count": 2622,
+            "handle_point_count": 0,
+            "body_center_xy": [
+              2.298946220604264,
+              -0.5747920788476678
+            ],
+            "radial_body": 0.024854551163951088,
+            "radial_threshold": 0.028640913372963317,
+            "max_handle_radial": 0.0898545511639511,
+            "handle_z_floor": 0.9561203085871333,
+            "z_low": 0.9214777642857652,
+            "z_high": 1.020456462289674,
+            "used_handle_side_cloud": false,
+            "handle_point_source": "body_model_residual_cluster"
+          },
+          "target_bbox": {
+            "raw_xyxy": [
+              523,
+              329,
+              563,
+              388
+            ],
+            "padded_xyxy": [
+              517,
+              320,
+              568,
+              397
+            ],
+            "padding_fraction": 0.15,
+            "image_shape_hw": [
+              480,
+              640
+            ],
+            "foreground_depth_filter": {
+              "valid_depth_count": 4056,
+              "foreground_depth_count": 2622,
+              "depth_jump_threshold": 0.03156419176664664,
+              "seed_depth": 1.1352136105136752
+            }
+          }
+        }
+      },
+      "assignment": {
+        "object_index": 3,
+        "label": "glass cup",
+        "conf": 0.4199920892715454,
+        "pos": [
+          2.289822395994636,
+          -0.5989133029069813,
+          1.007091607326567
+        ],
+        "has_handle": false,
+        "strategy": "top_down",
+        "arm": "left",
+        "sim_object_name": null,
+        "sim_metadata_distance_xy": null,
+        "candidate_id": 1,
+        "candidate_score": 0.20955042186990228,
+        "raw_handle_top_down_score": null,
+        "handle_top_down_min_score": 0.3
+      },
+      "point_cloud_count": 2622,
+      "handle_point_cloud_count": 915
+    },
+    {
+      "target": {
+        "label": "glass cup",
+        "pos": [
+          2.0002520221276954,
+          -0.5638835654623158,
+          1.0000389220486436
+        ],
+        "conf": 0.40447333455085754,
+        "grasp_candidates": [
+          {
+            "id": 1,
+            "pos": [
+              2.0036690120573786,
+              -0.5286293161161182,
+              0.9775225041146302
+            ],
+            "orientation": [
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ]
+            ],
+            "gripper_width": 0.08,
+            "score": 0.2015635378345243,
+            "grasp_type": "top_down"
+          }
+        ],
+        "diagnostics": {
+          "2": {
+            "grasp_type": "handle_top_down",
+            "rejected": true,
+            "reject_reason": "insufficient_body_residual_points",
+            "point_cloud_count": 2636,
+            "candidate_point_cloud_count": 2636,
+            "handle_point_count": 7,
+            "body_center_xy": [
+              2.0036690120573786,
+              -0.5286293161161182
+            ],
+            "radial_body": 0.0353535777184647,
+            "radial_threshold": 0.03651518328884853,
+            "max_handle_radial": 0.1003535777184647,
+            "handle_z_floor": 0.9487409919861928,
+            "z_low": 0.921522928264576,
+            "z_high": 0.9992888246120523,
+            "used_handle_side_cloud": false,
+            "handle_point_source": "body_model_residual_cluster"
+          },
+          "target_bbox": {
+            "raw_xyxy": [
+              374,
+              316,
+              412,
+              374
+            ],
+            "padded_xyxy": [
+              369,
+              308,
+              418,
+              382
+            ],
+            "padding_fraction": 0.15,
+            "image_shape_hw": [
+              480,
+              640
+            ],
+            "foreground_depth_filter": {
+              "valid_depth_count": 3750,
+              "foreground_depth_count": 2636,
+              "depth_jump_threshold": 0.02986917697812602,
+              "seed_depth": 1.175835793358874
+            }
+          }
+        }
+      },
+      "assignment": {
+        "object_index": 4,
+        "label": "glass cup",
+        "conf": 0.40447333455085754,
+        "pos": [
+          2.0002520221276954,
+          -0.5638835654623158,
+          1.0000389220486436
+        ],
+        "has_handle": false,
+        "strategy": "top_down",
+        "arm": "left",
+        "sim_object_name": null,
+        "sim_metadata_distance_xy": null,
+        "candidate_id": 1,
+        "candidate_score": 0.2015635378345243,
+        "raw_handle_top_down_score": null,
+        "handle_top_down_min_score": 0.3
+      },
+      "point_cloud_count": 2636,
+      "handle_point_cloud_count": 900
+    },
+    {
+      "target": {
+        "label": "glass cup",
+        "pos": [
+          2.1375400474116466,
+          -0.5860085352855464,
+          1.010301493693253
+        ],
+        "conf": 0.38375914096832275,
+        "grasp_candidates": [
+          {
+            "id": 1,
+            "pos": [
+              2.14198119680308,
+              -0.5543593832632959,
+              0.9914102810292819
+            ],
+            "orientation": [
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ]
+            ],
+            "gripper_width": 0.075,
+            "score": 0.19090307038887241,
+            "grasp_type": "top_down"
+          },
+          {
+            "id": 2,
+            "pos": [
+              2.1399398416474145,
+              -0.584789878254131,
+              1.0035929406444248
+            ],
+            "orientation": [
+              [
+                -0.07646999130465305,
+                -0.9970718832811737,
+                0.0
+              ],
+              [
+                -0.9970718832811737,
+                0.07646999130465305,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ]
+            ],
+            "gripper_width": 0.015,
+            "score": 0.24123450717750325,
+            "grasp_type": "handle_top_down"
+          }
+        ],
+        "diagnostics": {
+          "2": {
+            "grasp_type": "handle_top_down",
+            "point_cloud_count": 1878,
+            "candidate_point_cloud_count": 1878,
+            "handle_point_count": 50,
+            "handle_ratio": 0.026624068157614485,
+            "radial_center_xy": [
+              2.14198119680308,
+              -0.5543593832632959
+            ],
+            "body_center_xy": [
+              2.14198119680308,
+              -0.5543593832632959
+            ],
+            "body_center_source": "body_model_inlier_median_from_top_surface_mean",
+            "handle_center": [
+              2.1399398416474145,
+              -0.584789878254131,
+              0.9990197386997973
+            ],
+            "grasp_xy": [
+              2.1399398416474145,
+              -0.584789878254131
+            ],
+            "grasp_xy_source": "handle_point_cloud_center",
+            "handle_direction_center_xy": [
+              2.1395292766056215,
+              -0.5863293187533536
+            ],
+            "handle_direction_source": "handle_tail_outer_points",
+            "handle_tail_point_count": 13,
+            "handle_tail_distance_threshold": 0.031676897734053605,
+            "outward_axis_xy": [
+              -0.07646999130465304,
+              -0.9970718832811736
+            ],
+            "radial_body": 0.02443040764018306,
+            "radial_threshold": 0.028322805730137297,
+            "max_handle_radial": 0.08943040764018306,
+            "handle_z_floor": 0.9547586367323102,
+            "z_low": 0.9214993399100799,
+            "z_high": 1.0165259022593092,
+            "top_z": 1.0035929406444248,
+            "top_surface_quality": 0.4,
+            "mean_handle_radial": 0.03058542062669066,
+            "protrusion_strength": 0.030498887787242333,
+            "protrusion_quality": 0.5552289051046131,
+            "thickness": 0.0035135489646556106,
+            "thickness_quality": 0.5,
+            "estimated_width": 0.015,
+            "selected_width": 0.015,
+            "approach_axis": [
+              0.0,
+              0.0,
+              -1.0
+            ],
+            "closing_axis": [
+              -0.07646999130465305,
+              -0.9970718832811737,
+              0.0
+            ],
+            "orientation_source": "handle_tail_outward_radial",
+            "lateral_axis": [
+              -0.9970718832811737,
+              0.07646999130465305,
+              0.0
+            ],
+            "used_handle_side_cloud": false,
+            "residual_point_count": 281,
+            "residual_sector_center_deg": -93.75000000000001,
+            "residual_sector_score": 0.030838131616462962,
+            "residual_sector_mean_radial": 0.03058542062669066,
+            "residual_sector_median_z": 1.0002599842977167,
+            "residual_sector_z_quality": 0.7366579559122214,
+            "residual_sector_point_count": 50,
+            "handle_point_source": "body_model_residual_cluster",
+            "bbox_side_band": "right"
+          },
+          "target_bbox": {
+            "raw_xyxy": [
+              447,
+              323,
+              481,
+              378
+            ],
+            "padded_xyxy": [
+              442,
+              315,
+              486,
+              386
+            ],
+            "padding_fraction": 0.15,
+            "image_shape_hw": [
+              480,
+              640
+            ],
+            "foreground_depth_filter": {
+              "valid_depth_count": 3240,
+              "foreground_depth_count": 1878,
+              "depth_jump_threshold": 0.025,
+              "seed_depth": 1.1461146142040606
+            }
+          }
+        }
+      },
+      "assignment": {
+        "object_index": 5,
+        "label": "glass cup",
+        "conf": 0.38375914096832275,
+        "pos": [
+          2.1375400474116466,
+          -0.5860085352855464,
+          1.010301493693253
+        ],
+        "has_handle": true,
+        "strategy": "handle_top_down",
+        "arm": "right",
+        "sim_object_name": null,
+        "sim_metadata_distance_xy": null,
+        "candidate_id": 2,
+        "candidate_score": 0.24123450717750325,
+        "raw_handle_top_down_score": 0.24123450717750325,
+        "handle_top_down_min_score": 0.3
+      },
+      "point_cloud_count": 1878,
+      "handle_point_cloud_count": 712
+    },
+    {
+      "target": {
+        "label": "glass cup",
+        "pos": [
+          1.8921042452944727,
+          -0.5924847483964226,
+          1.375021554335967
+        ],
+        "conf": 0.37017160654067993,
+        "grasp_candidates": [
+          {
+            "id": 1,
+            "pos": [
+              1.8845475305726438,
+              -0.5790028341375525,
+              1.3538034210594192
+            ],
+            "orientation": [
+              [
+                1.0,
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ]
+            ],
+            "gripper_width": 0.075,
+            "score": 0.1838607542040924,
+            "grasp_type": "top_down"
+          },
+          {
+            "id": 2,
+            "pos": [
+              1.9251216723659563,
+              -0.6002041490561921,
+              1.3746352599299083
+            ],
+            "orientation": [
+              [
+                0.8776451111038984,
+                -0.4793110252804809,
+                0.0
+              ],
+              [
+                -0.4793110252804809,
+                -0.8776451111038984,
+                -0.0
+              ],
+              [
+                0.0,
+                0.0,
+                -1.0
+              ]
+            ],
+            "gripper_width": 0.030591049317456147,
+            "score": 0.25691973268321405,
+            "grasp_type": "handle_top_down"
+          }
+        ],
+        "diagnostics": {
+          "2": {
+            "grasp_type": "handle_top_down",
+            "point_cloud_count": 1732,
+            "candidate_point_cloud_count": 1732,
+            "handle_point_count": 83,
+            "handle_ratio": 0.04792147806004619,
+            "radial_center_xy": [
+              1.8845475305726438,
+              -0.5790028341375525
+            ],
+            "body_center_xy": [
+              1.8845475305726438,
+              -0.5790028341375525
+            ],
+            "body_center_source": "body_model_inlier_median_from_top_surface_mean",
+            "handle_center": [
+              1.9251216723659563,
+              -0.6002041490561921,
+              1.3734395752354456
+            ],
+            "grasp_xy": [
+              1.9251216723659563,
+              -0.6002041490561921
+            ],
+            "grasp_xy_source": "handle_point_cloud_center",
+            "handle_direction_center_xy": [
+              1.93308966384924,
+              -0.6055132987612798
+            ],
+            "handle_direction_source": "handle_tail_outer_points",
+            "handle_tail_point_count": 21,
+            "handle_tail_distance_threshold": 0.052317231223096804,
+            "outward_axis_xy": [
+              0.8776451111038984,
+              -0.4793110252804809
+            ],
+            "radial_body": 0.025244924194502333,
+            "radial_threshold": 0.02893369314587675,
+            "max_handle_radial": 0.09024492419450234,
+            "handle_z_floor": 1.368940668136272,
+            "z_low": 1.3631987297519816,
+            "z_high": 1.379604267992811,
+            "top_z": 1.3746352599299083,
+            "top_surface_quality": 0.39759036144578314,
+            "mean_handle_radial": 0.0459139410292698,
+            "protrusion_strength": 0.04577943573858423,
+            "protrusion_quality": 0.6445505630906105,
+            "thickness": 0.022591049317456147,
+            "thickness_quality": 0.9802983560847951,
+            "estimated_width": 0.030591049317456147,
+            "selected_width": 0.030591049317456147,
+            "approach_axis": [
+              0.0,
+              0.0,
+              -1.0
+            ],
+            "closing_axis": [
+              0.8776451111038984,
+              -0.4793110252804809,
+              0.0
+            ],
+            "orientation_source": "handle_tail_outward_radial",
+            "lateral_axis": [
+              -0.4793110252804809,
+              -0.8776451111038984,
+              -0.0
+            ],
+            "used_handle_side_cloud": false,
+            "residual_point_count": 316,
+            "residual_sector_center_deg": -26.25000000000002,
+            "residual_sector_score": 0.042708785396914604,
+            "residual_sector_mean_radial": 0.0459139410292698,
+            "residual_sector_median_z": 1.37407277951347,
+            "residual_sector_z_quality": 0.4812738143067982,
+            "residual_sector_point_count": 83,
+            "handle_point_source": "body_model_residual_cluster",
+            "bbox_side_band": "right"
+          },
+          "target_bbox": {
+            "raw_xyxy": [
+              323,
+              176,
+              364,
+              206
+            ],
+            "padded_xyxy": [
+              317,
+              172,
+              370,
+              210
+            ],
+            "padding_fraction": 0.15,
+            "image_shape_hw": [
+              480,
+              640
+            ],
+            "foreground_depth_filter": {
+              "valid_depth_count": 2106,
+              "foreground_depth_count": 1732,
+              "depth_jump_threshold": 0.025,
+              "seed_depth": 0.9402413899265227
+            }
+          }
+        }
+      },
+      "assignment": {
+        "object_index": 6,
+        "label": "glass cup",
+        "conf": 0.37017160654067993,
+        "pos": [
+          1.8921042452944727,
+          -0.5924847483964226,
+          1.375021554335967
+        ],
+        "has_handle": true,
+        "strategy": "handle_top_down",
+        "arm": "right",
+        "sim_object_name": null,
+        "sim_metadata_distance_xy": null,
+        "candidate_id": 2,
+        "candidate_score": 0.25691973268321405,
+        "raw_handle_top_down_score": 0.25691973268321405,
+        "handle_top_down_min_score": 0.3
+      },
+      "point_cloud_count": 1732,
+      "handle_point_cloud_count": 447
+    }
+  ],
+  "scene_point_count": 76800,
+  "target_point_count": 15293,
+  "handle_point_count": 4872,
+  "artifacts": {
+    "rgb_png": "outputs\\vision\\cup_mug_sorting_all\\rgb.png",
+    "depth_png": "outputs\\vision\\cup_mug_sorting_all\\depth.png",
+    "overlay_png": "outputs\\vision\\cup_mug_sorting_all\\rgb_detection_overlay.png",
+    "multi_target_overlay_png": "outputs\\vision\\cup_mug_sorting_all\\rgb_multi_target_overlay.png",
+    "camera_reprojection_scene_png": "outputs\\vision\\cup_mug_sorting_all\\camera_reprojection_scene.png",
+    "camera_reprojection_target_png": "outputs\\vision\\cup_mug_sorting_all\\camera_reprojection_target.png",
+    "rgb_grasp_axes_overlay_png": "outputs\\vision\\cup_mug_sorting_all\\rgb_grasp_axes_overlay.png",
+    "scene_ply": "outputs\\vision\\cup_mug_sorting_all\\scene_point_cloud.ply",
+    "target_ply": "outputs\\vision\\cup_mug_sorting_all\\target_bbox_point_cloud.ply",
+    "handle_ply": "outputs\\vision\\cup_mug_sorting_all\\target_handle_side_point_cloud.ply"
+  }
+}
