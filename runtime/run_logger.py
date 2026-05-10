@@ -96,6 +96,7 @@ def build_run_log(
     duration_sec,
     context,
     execution_summary=None,
+    extra_payload=None,
 ):
     """Build a run log matching the required JSON schema."""
     candidate_metadata = extract_candidate_metadata(execution_summary)
@@ -121,6 +122,8 @@ def build_run_log(
     }
     if execution_summary is not None:
         run_log["execution_summary"] = execution_summary
+    if extra_payload is not None:
+        run_log.update(extra_payload)
     return run_log
 
 

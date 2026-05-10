@@ -33,6 +33,7 @@ from arm.base_torso import (
     preposition_base_torso,
 )
 from arm.calibration import calibrate_position_action_mapping
+from arm.cup_mug_live_execution import LiveExecutionOptions, run_live_target_execution
 from arm.reachability import diagnose_reachability
 from arm.reach_retry import should_retry_with_preposition
 from arm.robocasa_execution import get_robot0_eef_quat
@@ -696,166 +697,40 @@ def main():
         base_action_mapping = np.asarray(base_mapping_summary["eef_xy_delta_from_base_action"], dtype=float)
         print(json.dumps({"base_action_mapping": base_mapping_summary}, indent=2))
 
-    def run_preposition(obs_for_preposition, reason):
-        next_obs, summary = preposition_base_torso(
-            env,
-            obs=obs_for_preposition,
-            target_pos=candidate["pos"],
-            action_mapping=action_mapping,
-            steps=int(args.base_torso_steps),
+    execution_result = run_live_target_execution(
+        env=env,
+        current_obs=current_obs,
+        candidate=candidate,
+        active_candidate_summary=active_candidate_summary,
+        action_mapping=action_mapping,
+        base_action_mapping=base_action_mapping,
+        infer_candidate_from_obs=infer_candidate_from_obs,
+        cup_mug_sorting_place_anchors=cup_mug_sorting_place_anchors,
+        options=LiveExecutionOptions(
             render_sleep_sec=float(args.render_sleep_sec),
-            base_slice=(int(args.base_action_start), int(args.base_action_end)),
-            torso_index=None if args.torso_action_index is None else int(args.torso_action_index),
-            desired_xy_standoff=float(args.base_desired_xy_standoff),
-            xy_deadband=float(args.base_xy_deadband),
-            base_gain=float(args.base_preposition_gain),
+            enable_base_torso_preposition=bool(args.enable_base_torso_preposition),
+            auto_preposition_retry=bool(args.auto_preposition_retry),
+            skip_vision_refresh_after_base_preposition=bool(args.skip_vision_refresh_after_base_preposition),
+            retry_final_error_threshold=float(args.retry_final_error_threshold),
+            base_torso_steps=int(args.base_torso_steps),
+            base_action_start=int(args.base_action_start),
+            base_action_end=int(args.base_action_end),
+            torso_action_index=None if args.torso_action_index is None else int(args.torso_action_index),
+            base_desired_xy_standoff=float(args.base_desired_xy_standoff),
+            base_xy_deadband=float(args.base_xy_deadband),
+            base_preposition_gain=float(args.base_preposition_gain),
             base_action_limit=float(args.base_action_limit),
-            base_action_mapping=base_action_mapping if args.use_base_action_mapping else None,
+            use_base_action_mapping=bool(args.use_base_action_mapping),
             base_mapping_trust=float(args.base_mapping_trust),
-            max_base_world_delta=float(args.base_max_world_delta),
-        )
-        summary["reason"] = reason
-        return next_obs, summary
-
-    def run_reach(obs_for_reach):
-        if candidate["grasp_type"] == "handle_top_down":
-            return execute_oriented_top_down_reach(
-                env,
-                obs=obs_for_reach,
-                candidate=candidate,
-                action_mapping=action_mapping,
-                render_sleep_sec=float(args.render_sleep_sec),
-            )
-        return execute_reach(
-            env,
-            obs=obs_for_reach,
-            candidate=candidate,
-            action_mapping=action_mapping,
-            render_sleep_sec=float(args.render_sleep_sec),
-        )
-
-    preposition_summary = None
-    candidate_refresh_summary = None
-    retry_summary = None
-    if args.enable_base_torso_preposition:
-        candidate_before_preposition = candidate
-        current_obs, preposition_summary = run_preposition(current_obs, reason="before_first_reach")
-        print(json.dumps({"base_torso_preposition": preposition_summary}, indent=2))
-        if preposition_summary.get("effective_should_move") and not args.skip_vision_refresh_after_base_preposition:
-            candidate, candidate_rejection, candidate_refresh_summary = infer_candidate_from_obs(
-                current_obs,
-                reason="after_base_preposition",
-            )
-            candidate_refresh_summary["previous_candidate"] = candidate_before_preposition
-            active_candidate_summary = candidate_refresh_summary
-            print(json.dumps({"candidate_after_base_preposition": candidate_refresh_summary}, indent=2))
-
-    current_obs, reach_summary = run_reach(current_obs)
-    reachability_diagnosis = diagnose_reachability(reach_summary, candidate=candidate)
-    if args.auto_preposition_retry and should_retry_with_preposition(
-        reach_summary,
-        reachability_diagnosis,
-        candidate,
-        final_error_threshold=float(args.retry_final_error_threshold),
-    ):
-        first_reach_summary = reach_summary
-        first_diagnosis = reachability_diagnosis
-        current_obs, retry_preposition_summary = run_preposition(current_obs, reason="after_reach_failure")
-        print(json.dumps({"base_torso_preposition_retry": retry_preposition_summary}, indent=2))
-        retry_candidate_refresh_summary = None
-        if retry_preposition_summary.get("effective_should_move") and not args.skip_vision_refresh_after_base_preposition:
-            previous_candidate = candidate
-            candidate, candidate_rejection, retry_candidate_refresh_summary = infer_candidate_from_obs(
-                current_obs,
-                reason="after_retry_base_preposition",
-            )
-            retry_candidate_refresh_summary["previous_candidate"] = previous_candidate
-            active_candidate_summary = retry_candidate_refresh_summary
-            print(json.dumps({"candidate_after_retry_base_preposition": retry_candidate_refresh_summary}, indent=2))
-        current_obs, reach_summary = run_reach(current_obs)
-        reachability_diagnosis = diagnose_reachability(reach_summary, candidate=candidate)
-        retry_summary = {
-            "triggered": True,
-            "first_reach": first_reach_summary,
-            "first_reachability_diagnosis": first_diagnosis,
-            "preposition": retry_preposition_summary,
-            "candidate_refresh": retry_candidate_refresh_summary,
-            "second_reach_success": bool(reach_summary.get("reach_success")),
-        }
-    elif args.auto_preposition_retry:
-        retry_summary = {"triggered": False, "reason": "retry_policy_not_matched"}
-
-    close_summary = None
-    lift_summary = None
-    place_plan = None
-    place_summary = None
-    failure_phase = None
-
-    if reach_summary.get("reach_only"):
-        failure_phase = None if reach_summary["reach_success"] else "reach"
-    elif not reach_summary["reach_success"]:
-        failure_phase = "reach"
-    else:
-        current_obs, close_summary = execute_close(
-            env,
-            obs=current_obs,
-            render_sleep_sec=float(args.render_sleep_sec),
-        )
-        if not close_summary["close_success"]:
-            failure_phase = "close"
-        else:
-            current_obs, lift_summary = execute_lift(
-                env,
-                obs=current_obs,
-                action_mapping=action_mapping,
-                render_sleep_sec=float(args.render_sleep_sec),
-            )
-            if not lift_summary["lift_success"]:
-                failure_phase = "lift"
-            elif use_drinkware_classification:
-                classification = active_candidate_summary.get("drinkware_classification") or {}
-                selected_assignment = classification.get("selected_assignment")
-                sim_objects = classification.get("sim_objects", [])
-                if selected_assignment is not None:
-                    place_plan = choose_cup_mug_place_target(
-                        selected_assignment,
-                        sim_objects,
-                        place_anchors=cup_mug_sorting_place_anchors(env),
-                    )
-                    current_obs, place_summary = execute_place(
-                        env,
-                        obs=current_obs,
-                        place_target=place_plan["target_pos"],
-                        action_mapping=action_mapping,
-                        render_sleep_sec=float(args.render_sleep_sec),
-                    )
-                    if not place_summary["place_success"]:
-                        failure_phase = "place"
-
-    execution_summary = {
-        "candidate": {
-            "id": int(candidate["id"]),
-            "grasp_type": candidate["grasp_type"],
-            "pos": candidate["pos"],
-            "score": float(candidate.get("score", 0.0)),
-            "source_handle_width": candidate.get("source_handle_width"),
-            "source_handle_candidate_id": candidate.get("source_handle_candidate_id"),
-            "source_handle_pos": candidate.get("source_handle_pos"),
-            "source_top_down_candidate_id": candidate.get("source_top_down_candidate_id"),
-        },
-        "base_torso_preposition": preposition_summary,
-        "candidate_after_base_preposition": candidate_refresh_summary,
-        "base_action_mapping": base_mapping_summary,
-        "auto_preposition_retry": retry_summary,
-        "reach": reach_summary,
-        "reachability_diagnosis": reachability_diagnosis,
-        "close": close_summary,
-        "lift": lift_summary,
-        "place_plan": place_plan,
-        "place": place_summary,
-        "overall_success": failure_phase is None,
-        "failure_phase": failure_phase,
-    }
+            base_max_world_delta=float(args.base_max_world_delta),
+            use_drinkware_classification=bool(use_drinkware_classification),
+        ),
+    )
+    current_obs = execution_result["obs"]
+    candidate = execution_result["candidate"]
+    candidate_rejection = execution_result["candidate_rejection"]
+    active_candidate_summary = execution_result["active_candidate_summary"]
+    execution_summary = execution_result["execution_summary"]
     print(json.dumps({"execution_summary": execution_summary}, indent=2))
 
     keep_open_sec = float(args.keep_open_sec)

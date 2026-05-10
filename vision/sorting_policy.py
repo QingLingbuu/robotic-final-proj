@@ -45,9 +45,10 @@ def _has_handle_evidence(
     )
 
 
-def assign_sim_metadata_to_targets(targets, sim_objects, max_xy_distance=0.18):
+def assign_sim_metadata_to_targets(targets, sim_objects, max_xy_distance=0.18, unmatched_fallback_max_xy_distance=None):
     """Attach nearest CupMugSorting sim metadata to visual targets."""
     assigned = []
+    used_names = set()
     for target in targets:
         target_pos = target.get("pos")
         best = None
@@ -67,7 +68,38 @@ def assign_sim_metadata_to_targets(targets, sim_objects, max_xy_distance=0.18):
             corrected["sim_object_name"] = best[1].get("name")
             corrected["sim_has_handle"] = bool(best[1].get("has_handle"))
             corrected["sim_metadata_distance_xy"] = float(best[0])
+            if best[1].get("name") is not None:
+                used_names.add(str(best[1].get("name")))
         assigned.append(corrected)
+
+    fallback_limit = max_xy_distance if unmatched_fallback_max_xy_distance is None else float(unmatched_fallback_max_xy_distance)
+    if fallback_limit > float(max_xy_distance):
+        for corrected in assigned:
+            if corrected.get("sim_object_name") is not None:
+                continue
+            target_pos = corrected.get("pos")
+            if target_pos is None:
+                continue
+            best = None
+            for sim_object in sim_objects:
+                sim_name = sim_object.get("name")
+                if sim_name is None or str(sim_name) in used_names:
+                    continue
+                sim_pos = sim_object.get("pos")
+                if sim_pos is None:
+                    continue
+                distance = math.dist(
+                    [float(target_pos[0]), float(target_pos[1])],
+                    [float(sim_pos[0]), float(sim_pos[1])],
+                )
+                if best is None or distance < best[0]:
+                    best = (distance, sim_object)
+            if best is not None and best[0] <= fallback_limit:
+                corrected["sim_object_name"] = best[1].get("name")
+                corrected["sim_has_handle"] = bool(best[1].get("has_handle"))
+                corrected["sim_metadata_distance_xy"] = float(best[0])
+                if best[1].get("name") is not None:
+                    used_names.add(str(best[1].get("name")))
     return assigned
 
 

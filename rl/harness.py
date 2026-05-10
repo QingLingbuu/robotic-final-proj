@@ -4,12 +4,40 @@ import json
 from typing import Any, cast
 from datetime import datetime, timezone
 from pathlib import Path
+import random
 
 import numpy as np
+from PIL import Image, ImageDraw
 
 from arm.env_wrapper import create_env_wrapper
 from runtime.bootstrap import resolve_repo_path
 from rl.contracts import load_rl_config, summarize_rl_config, validate_rl_config
+from rl.cup_mug_metrics import (
+    aggregate_episode_records,
+    build_episode_record,
+    build_rl_ordering_run_payload,
+    write_ordering_metrics,
+)
+from rl.cup_mug_observation import build_cup_mug_ordering_observation
+from rl.cup_mug_policies import select_action
+from rl.cup_mug_runner import CupMugOrderingEpisodeRunner
+
+
+CUP_ORDERING_FAILURE_TYPE_CODES = {
+    None: -1.0,
+    "": -1.0,
+    "all_actions_invalid": 0.0,
+    "invalid_action": 1.0,
+    "grasp_failure": 2.0,
+    "placement_failure": 3.0,
+    "timeout": 4.0,
+    "collision": 5.0,
+    "reach": 6.0,
+    "close": 7.0,
+    "lift": 8.0,
+    "place": 9.0,
+}
+CUP_ORDERING_CHECKPOINT_MODEL_CACHE = {}
 
 try:
     from stable_baselines3 import PPO
@@ -303,15 +331,642 @@ def ensure_artifact_dirs(config):
     checkpoint_dir = root_dir / config["artifacts"]["checkpoint_dir"]
     metrics_dir = root_dir / config["artifacts"]["metrics_dir"]
     video_dir = root_dir / config["artifacts"]["video_dir"]
+    report_dir_name = config["artifacts"].get("report_dir")
+    report_dir = root_dir / report_dir_name if report_dir_name else None
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     metrics_dir.mkdir(parents=True, exist_ok=True)
     video_dir.mkdir(parents=True, exist_ok=True)
+    if report_dir is not None:
+        report_dir.mkdir(parents=True, exist_ok=True)
     return {
         "root_dir": root_dir,
         "checkpoint_dir": checkpoint_dir,
         "metrics_dir": metrics_dir,
         "video_dir": video_dir,
+        "report_dir": report_dir,
     }
+
+
+def _is_cup_ordering_config(config):
+    return config.get("mode") == "cup_ordering"
+
+
+def _cup_ordering_scene_config(config):
+    scene = dict(config.get("scene", {}))
+    return {
+        "layout_and_style_ids": list(scene.get("layout_and_style_ids", [])),
+        "num_mugs": int(scene.get("num_mugs", 0)),
+        "num_cups": int(scene.get("num_cups", 0)),
+    }
+
+
+def _cup_ordering_sorting_metadata():
+    return {
+        "mug_1": {"has_handle": True, "target_zone": "handled", "recommended_grasp": "handle_top_down"},
+        "mug_2": {"has_handle": True, "target_zone": "handled", "recommended_grasp": "handle_top_down"},
+        "cup_1": {"has_handle": False, "target_zone": "plain", "recommended_grasp": "top_down"},
+        "cup_2": {"has_handle": False, "target_zone": "plain", "recommended_grasp": "top_down"},
+        "cup_3": {"has_handle": False, "target_zone": "plain", "recommended_grasp": "top_down"},
+    }
+
+
+def _cup_ordering_fixture(seed):
+    rng = random.Random(int(seed))
+    object_specs = [
+        ("mug_1", "mug", True),
+        ("mug_2", "mug", True),
+        ("cup_1", "cup", False),
+        ("cup_2", "cup", False),
+        ("cup_3", "cup", False),
+    ]
+    targets = []
+    assignments = []
+    for index, (name, label, has_handle) in enumerate(object_specs):
+        conf = round(0.72 + 0.02 * rng.random() + 0.015 * index, 4)
+        candidate_score = round(0.66 + 0.03 * rng.random() + 0.02 * index, 4)
+        reachability = round(0.55 + 0.04 * rng.random() + 0.03 * (4 - index), 4)
+        pos = [round(0.35 + 0.08 * index, 4), round(-0.2 + 0.05 * ((index % 2) * 2 - 1), 4), 0.95]
+        targets.append(
+            {
+                "label": label,
+                "conf": conf,
+                "pos": pos,
+                "visible": True,
+                "sim_object_name": name,
+                "sim_has_handle": has_handle,
+                "grasp_candidates": [
+                    {
+                        "id": index + 1,
+                        "grasp_type": "handle_top_down" if has_handle else "top_down",
+                        "score": candidate_score,
+                    }
+                ],
+            }
+        )
+        assignments.append(
+            {
+                "label": label,
+                "sim_object_name": name,
+                "has_handle": has_handle,
+                "strategy": "handle_top_down" if has_handle else "top_down",
+                "candidate_score": candidate_score,
+                "reachability": reachability,
+                "distance_to_place": round(0.1 + 0.02 * index, 4),
+                "policy": None,
+            }
+        )
+    return targets, assignments
+
+
+def _cup_ordering_executor(slot, observation, step_index):
+    return {
+        "low_level_success": True,
+        "correct_zone": True,
+        "failure_type": None,
+        "trace": {
+            "selected_slot": int(slot["slot_index"]),
+            "object_id": slot.get("object_id"),
+            "step_index": int(step_index),
+            "grasp_strategy": slot.get("recommended_grasp"),
+            "place_zone": slot.get("place_zone_id"),
+        },
+    }
+
+
+def _cup_ordering_rl_action(observation, seed, step_index):
+    valid_actions = [index for index, value in enumerate(observation.get("action_mask", [])) if bool(value)]
+    if not valid_actions:
+        return None, {"policy": "rl", "reason": "all_actions_invalid", "valid_actions": []}
+
+    def slot_for(index):
+        for slot in observation.get("slots", []):
+            if int(slot.get("slot_index", -1)) == int(index):
+                return slot
+        return {}
+
+    ranked = []
+    for action_index in valid_actions:
+        slot = slot_for(action_index)
+        handle_rank = 0 if slot.get("has_handle") is True else 1
+        ranked.append(
+            (
+                handle_rank,
+                -float(slot.get("candidate_score", 0.0) or 0.0),
+                -float(slot.get("conf", 0.0) or 0.0),
+                -float(slot.get("reachability", 0.0) or 0.0),
+                int(slot.get("retry_count", 0) or 0),
+                int(action_index),
+            )
+        )
+    ranked.sort()
+    action = int(ranked[0][-1])
+    return int(action), {
+        "policy": "rl",
+        "reason": "sanity_stub_policy",
+        "valid_actions": list(valid_actions),
+        "stub_seed": int(seed),
+        "stub_step_index": int(step_index),
+        "ranked_actions": [int(item[-1]) for item in ranked],
+        "selection_mode": "handle_first_quality_biased_stub",
+    }
+
+
+def _cup_ordering_valid_actions(observation):
+    return [index for index, value in enumerate(observation.get("action_mask", [])) if bool(value)]
+
+
+def _bool_feature(value, unknown=-1.0):
+    if value is None:
+        return float(unknown)
+    return 1.0 if bool(value) else 0.0
+
+
+def _failure_type_code(value):
+    return float(CUP_ORDERING_FAILURE_TYPE_CODES.get(value, 99.0))
+
+
+def flatten_cup_ordering_observation(observation):
+    """Flatten the fixed 5-slot cup-ordering observation for checkpoint policies."""
+
+    features = []
+    slots = list(observation.get("slots", []))[:5]
+    for slot in slots:
+        pos = list(slot.get("pos") or [0.0, 0.0, 0.0])
+        pos = (pos[:3] + [0.0] * max(0, 3 - len(pos)))[:3]
+        features.extend(
+            [
+                float(slot.get("slot_index", 0) or 0),
+                _bool_feature(slot.get("visible")),
+                _bool_feature(slot.get("finished")),
+                _bool_feature(slot.get("has_handle")),
+                float(slot.get("type_id", -1) or -1),
+                float(slot.get("conf", 0.0) or 0.0),
+                float(pos[0]),
+                float(pos[1]),
+                float(pos[2]),
+                float(slot.get("candidate_score", 0.0) or 0.0),
+                float(slot.get("reachability", 0.0) or 0.0),
+                float(slot.get("place_zone_id", -1) or -1),
+                float(slot.get("retry_count", 0) or 0),
+                _bool_feature(slot.get("valid_action")),
+            ]
+        )
+    features.extend([0.0] * max(0, 5 - len(slots)) * 14)
+
+    global_payload = dict(observation.get("global", {}) or {})
+    last_action = global_payload.get("last_action")
+    features.extend(
+        [
+            float(global_payload.get("remaining_count", 0) or 0),
+            float(global_payload.get("completed_count", 0) or 0),
+            float(global_payload.get("step_index", 0) or 0),
+            -1.0 if last_action is None else float(last_action),
+            _bool_feature(global_payload.get("last_success")),
+            _failure_type_code(global_payload.get("last_failure_type")),
+        ]
+    )
+    action_mask = list(observation.get("action_mask", []))[:5]
+    action_mask = action_mask + [0] * max(0, 5 - len(action_mask))
+    features.extend([1.0 if bool(value) else 0.0 for value in action_mask[:5]])
+    return np.asarray(features, dtype=np.float32)
+
+
+def _coerce_discrete_action(raw_action):
+    raw = np.asarray(raw_action).reshape(-1)
+    if raw.size == 0:
+        raise RuntimeError("Checkpoint policy returned an empty action.")
+    return int(raw[0])
+
+
+def _load_cup_ordering_checkpoint_model(checkpoint_path):
+    if PPO is None:
+        raise ModuleNotFoundError("stable_baselines3 must be installed for cup-ordering checkpoint inference.")
+    resolved_path = str(resolve_repo_path(str(checkpoint_path)))
+    if resolved_path not in CUP_ORDERING_CHECKPOINT_MODEL_CACHE:
+        CUP_ORDERING_CHECKPOINT_MODEL_CACHE[resolved_path] = PPO.load(resolved_path)
+    return CUP_ORDERING_CHECKPOINT_MODEL_CACHE[resolved_path]
+
+
+def _predict_cup_ordering_checkpoint_action(observation, metadata):
+    valid_actions = _cup_ordering_valid_actions(observation)
+    if not valid_actions:
+        return None, {
+            "policy": "rl",
+            "reason": "all_actions_invalid",
+            "valid_actions": [],
+            "rl_policy_mode": "checkpoint",
+            "rl_checkpoint": metadata.get("checkpoint_path"),
+            "checkpoint_interface": metadata,
+        }
+
+    observation_vector = flatten_cup_ordering_observation(observation)
+    model = _load_cup_ordering_checkpoint_model(metadata["checkpoint_path"])
+    raw_action, _states = model.predict(observation_vector, deterministic=True)
+    action = _coerce_discrete_action(raw_action)
+    return action, {
+        "policy": "rl",
+        "reason": "checkpoint_policy",
+        "valid_actions": list(valid_actions),
+        "predicted_action": int(action),
+        "predicted_action_valid": int(action) in set(valid_actions),
+        "selection_mode": "checkpoint_inference",
+        "observation_vector_length": int(observation_vector.shape[0]),
+        "rl_policy_mode": "checkpoint",
+        "rl_checkpoint": metadata.get("checkpoint_path"),
+        "checkpoint_interface": metadata,
+    }
+
+
+def inspect_cup_ordering_checkpoint_artifact(checkpoint_path):
+    if checkpoint_path is None or str(checkpoint_path).strip() in {"", "cup-ordering-dry-run"}:
+        return {
+            "policy_mode": "stub",
+            "checkpoint_path": None if checkpoint_path is None else str(checkpoint_path),
+            "artifact_kind": "cup_ordering_stub_policy",
+            "schema_version": 1,
+            "supports_inference": False,
+            "unsupported_reason": "sanity_stub_policy",
+        }
+
+    resolved_path = resolve_repo_path(str(checkpoint_path))
+    if not resolved_path.exists():
+        raise FileNotFoundError(f"Cup-ordering checkpoint not found: {resolved_path}")
+
+    suffix = resolved_path.suffix.lower()
+    if suffix == ".json":
+        payload = json.loads(resolved_path.read_text(encoding="utf-8"))
+        if payload.get("mode") != "cup_ordering":
+            raise ValueError(f"Cup-ordering checkpoint JSON missing mode='cup_ordering': {resolved_path}")
+        return {
+            "policy_mode": "checkpoint",
+            "checkpoint_path": str(resolved_path),
+            "artifact_kind": str(payload.get("artifact_kind") or "cup_ordering_sanity_checkpoint"),
+            "schema_version": int(payload.get("schema_version", 1)),
+            "supports_inference": bool(payload.get("supports_inference", False)),
+            "unsupported_reason": str(
+                payload.get("unsupported_reason") or "checkpoint_artifact_has_no_online_inference_backend"
+            ),
+        }
+
+    if suffix == ".zip":
+        return {
+            "policy_mode": "checkpoint",
+            "checkpoint_path": str(resolved_path),
+            "artifact_kind": "cup_ordering_policy_checkpoint_zip",
+            "schema_version": 1,
+            "supports_inference": True,
+            "unsupported_reason": None,
+        }
+
+    raise ValueError(f"Unsupported cup-ordering checkpoint format: {resolved_path}")
+
+
+def select_cup_ordering_rl_action(observation, seed, step_index, checkpoint_path=None, checkpoint_metadata=None):
+    metadata = checkpoint_metadata or inspect_cup_ordering_checkpoint_artifact(checkpoint_path)
+    if metadata.get("policy_mode") == "checkpoint":
+        if not metadata.get("supports_inference"):
+            raise RuntimeError(
+                "Cup-ordering checkpoint interface is reserved but inference is unavailable: "
+                f"{metadata.get('unsupported_reason')} ({metadata.get('checkpoint_path')})"
+            )
+        return _predict_cup_ordering_checkpoint_action(observation, metadata)
+
+    action, debug = _cup_ordering_rl_action(observation, seed=seed, step_index=step_index)
+    debug["rl_policy_mode"] = metadata.get("policy_mode", "stub")
+    debug["rl_checkpoint"] = metadata.get("checkpoint_path")
+    debug["checkpoint_interface"] = metadata
+    return action, debug
+
+
+def classify_cup_ordering_failure(*, failure_reason=None, failure_phase=None, retry_refresh_failure_reason=None):
+    reason = str(failure_reason or retry_refresh_failure_reason or "")
+    phase = str(failure_phase or "")
+
+    if reason == "rl_checkpoint_inference_unsupported":
+        return "checkpoint_interface"
+    if reason == "all_actions_invalid":
+        return "policy_no_valid_action"
+    if reason in {"slot_out_of_range", "slot_invalid", "target_missing_for_slot"}:
+        return "slot_resolution"
+    if phase == "candidate_build" or phase == "candidate_refresh":
+        return "candidate_build"
+    if phase in {"reach", "close", "lift", "place"}:
+        return f"execution_{phase}"
+    if reason.startswith("Handle candidate") or reason.startswith("Top-down candidate"):
+        return "candidate_threshold"
+    if reason.startswith("No reachable candidate") or reason.startswith("Could not resolve live target"):
+        return "candidate_resolution"
+    if reason:
+        return "runtime_error"
+    return None
+
+
+def _cup_ordering_frame_dir(config, dirs, stem):
+    return dirs["root_dir"] / "frames" / stem
+
+
+def _build_cup_ordering_real_render_env_config(config, seed):
+    controller_configs = None
+    try:
+        from robosuite.controllers import load_composite_controller_config
+        controller_configs = load_composite_controller_config(robot="PandaOmron")
+    except ModuleNotFoundError:
+        controller_configs = None
+
+    return {
+        "task_name": config["task_name"],
+        "split": None,
+        "robots": "PandaOmron",
+        "camera_names": "robot0_agentview_center",
+        "camera_widths": 640,
+        "camera_heights": 480,
+        "camera_depths": True,
+        "render_mode": None,
+        "layout_ids": None,
+        "style_ids": None,
+        "layout_and_style_ids": list(config.get("scene", {}).get("layout_and_style_ids", [])),
+        "seed": None if seed is None else int(seed),
+        "obj_instance_split": None,
+        "translucent_robot": True,
+    }
+
+
+def _close_wrapper_env(wrapper):
+    env = getattr(wrapper, "env", None)
+    if env is not None and hasattr(env, "close"):
+        env.close()
+
+
+def _try_capture_real_cup_ordering_background_frame(config, seed):
+    try:
+        env_config = _build_cup_ordering_real_render_env_config(config, seed=seed)
+        wrapper = create_env_wrapper(backend="robocasa", config=env_config, camera_config={})
+    except Exception as exc:  # noqa: BLE001 - best effort background acquisition
+        return None, {"frame_source": "synthetic_fallback", "real_render_error": f"wrapper_init_failed: {exc}"}
+
+    try:
+        wrapper.reset(seed=seed)
+        wrapper.render()
+        rgb, _, _ = wrapper.get_observation()
+        if rgb is None:
+            return None, {"frame_source": "synthetic_fallback", "real_render_error": "wrapper_returned_no_rgb"}
+        return np.asarray(rgb, dtype=np.uint8), {"frame_source": "real_robocasa_camera", "real_render_error": None}
+    except Exception as exc:  # noqa: BLE001 - best effort background acquisition
+        return None, {"frame_source": "synthetic_fallback", "real_render_error": f"wrapper_capture_failed: {exc}"}
+    finally:
+        _close_wrapper_env(wrapper)
+
+
+def _draw_cup_ordering_frame(observation, step_log=None, title=None, background_frame=None):
+    width = 1000
+    height = 620
+    if background_frame is not None:
+        background = Image.fromarray(np.asarray(background_frame, dtype=np.uint8)).convert("RGB").resize((width, 340))
+        image = Image.new("RGB", (width, height), color=(245, 247, 250))
+        image.paste(background, (0, 0))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle([0, 340, width, height], fill=(245, 247, 250))
+        top = 390
+    else:
+        image = Image.new("RGB", (width, height), color=(245, 247, 250))
+        draw = ImageDraw.Draw(image)
+        top = 60
+    draw = ImageDraw.Draw(image)
+    draw.text((20, 16), title or "cup_ordering dry-run", fill=(20, 20, 20))
+    slot_width = 180
+    for slot in observation.get("slots", []):
+        slot_index = int(slot.get("slot_index", 0))
+        left = 20 + slot_index * (slot_width + 10)
+        right = left + slot_width
+        bottom = top + 160
+        is_selected = step_log is not None and int(step_log.get("selected_slot", -1)) == slot_index
+        has_handle = slot.get("has_handle") is True
+        fill = (222, 242, 255) if has_handle else (255, 240, 220)
+        if not bool(slot.get("valid_action")):
+            fill = (228, 228, 228)
+        if is_selected:
+            fill = (190, 235, 190)
+        draw.rounded_rectangle([left, top, right, bottom], radius=14, fill=fill, outline=(80, 80, 80), width=2)
+        draw.text((left + 10, top + 10), f"slot {slot_index}", fill=(30, 30, 30))
+        draw.text((left + 10, top + 38), f"id: {slot.get('object_id')}", fill=(30, 30, 30))
+        draw.text((left + 10, top + 66), f"grasp: {slot.get('recommended_grasp')}", fill=(30, 30, 30))
+        draw.text((left + 10, top + 94), f"zone: {slot.get('place_zone_id')}", fill=(30, 30, 30))
+        draw.text((left + 10, top + 122), f"score: {slot.get('candidate_score')}", fill=(30, 30, 30))
+        draw.text((left + 10, top + 150), f"valid: {slot.get('valid_action')}", fill=(30, 30, 30))
+    if step_log is not None:
+        draw.text((20, height - 30), f"selected_slot={step_log.get('selected_slot')} object={step_log.get('object_id')} reward={step_log.get('reward')}", fill=(20, 20, 20))
+    return np.asarray(image, dtype=np.uint8)
+
+
+def _append_video_frame(video_writer, frame):
+    if video_writer is not None:
+        video_writer.append_data(np.asarray(frame, dtype=np.uint8))
+
+
+def _save_frame_png(frame, output_path):
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(np.asarray(frame, dtype=np.uint8)).save(output_path)
+    return output_path
+
+
+def _cup_ordering_report_path(config, dirs, stem):
+    report_dir = dirs.get("report_dir") or dirs["root_dir"]
+    return report_dir / f"{stem}.json"
+
+
+def _cup_ordering_sidecar_path(config, dirs, stem):
+    report_dir = dirs.get("report_dir") or dirs["root_dir"]
+    return report_dir / f"{stem}.sidecar.json"
+
+
+def _write_json(path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return path
+
+
+def _build_episode_sidecar(policy_name, summary, background_metadata, frame_paths, video_output_path=None):
+    step_logs = list(summary.get("step_logs", []))
+    return {
+        "policy": policy_name,
+        "episode_id": summary.get("episode_id"),
+        "selected_order": list(summary.get("selected_order", [])),
+        "object_ids": [entry.get("object_id") for entry in step_logs],
+        "has_handle": [entry.get("has_handle") for entry in step_logs],
+        "grasp_strategy": [entry.get("grasp_strategy") for entry in step_logs],
+        "place_zone": [entry.get("place_zone") for entry in step_logs],
+        "success": bool(summary.get("success")),
+        "failure_type": [entry.get("failure_type") for entry in step_logs],
+        "frame_paths": list(frame_paths),
+        "video_output_path": video_output_path,
+        **background_metadata,
+    }
+
+
+def _run_cup_ordering_dry_run(
+    config,
+    policy_name,
+    episodes,
+    seed_start,
+    save_report=False,
+    report_stem=None,
+    render_override=None,
+    save_video=False,
+    video_path=None,
+    checkpoint_path=None,
+    checkpoint_metadata=None,
+):
+    dirs = ensure_artifact_dirs(config)
+    scene_config = _cup_ordering_scene_config(config)
+    sorting_metadata = _cup_ordering_sorting_metadata()
+    episode_records = []
+    should_render = bool(render_override)
+    report_payload = {
+        "mode": "cup_ordering",
+        "policy": policy_name,
+        "episodes": int(episodes),
+        "scene_config": scene_config,
+        "episode_traces": [],
+        "sidecar_paths": [],
+        "video_output_path": None,
+        "video_skip_reason": None,
+    }
+    frame_dir = _cup_ordering_frame_dir(config, dirs, f"{policy_name}-episodes-{int(episodes)}") if should_render else None
+    video_writer = None
+    resolved_video_path = None
+    if save_video:
+        if imageio is None:
+            report_payload["video_skip_reason"] = "imageio_not_installed"
+        else:
+            if video_path is None:
+                resolved_video_path = dirs["video_dir"] / f"{policy_name}-episodes-{int(episodes)}.mp4"
+            else:
+                resolved_video_path = resolve_repo_path(video_path)
+            resolved_video_path.parent.mkdir(parents=True, exist_ok=True)
+            video_writer = imageio.get_writer(str(resolved_video_path), fps=2)
+            report_payload["video_output_path"] = str(resolved_video_path)
+    seeds = [int(seed_start) + index for index in range(int(episodes))]
+    for episode_index, seed in enumerate(seeds, start=1):
+        targets, assignments = _cup_ordering_fixture(seed)
+        background_frame = None
+        background_metadata = {"frame_source": "synthetic_fallback", "real_render_error": None}
+        if should_render:
+            background_frame, background_metadata = _try_capture_real_cup_ordering_background_frame(config, seed=seed)
+        runner = CupMugOrderingEpisodeRunner(
+            build_cup_mug_ordering_observation,
+            _cup_ordering_executor,
+            reward_weights=config["reward"]["coefficients"],
+            allowed_failed_attempts=0,
+            max_targets=int(config["max_targets"]),
+        )
+        runner.reset(targets, assignments, sorting_metadata, episode_id=f"episode-{episode_index:03d}", seed=seed)
+        done = False
+        episode_frame_paths = []
+        while not done:
+            observation = runner.get_observation()
+            if str(policy_name) == "rl":
+                action, debug = select_cup_ordering_rl_action(
+                    observation,
+                    seed=seed,
+                    step_index=runner._episode_state["step_index"],
+                    checkpoint_path=checkpoint_path,
+                    checkpoint_metadata=checkpoint_metadata,
+                )
+            else:
+                action, debug = select_action(observation, policy_name, rng=random.Random(seed + runner._episode_state["step_index"]))
+            if action is None:
+                result = runner.step(0)
+            else:
+                result = runner.step(action)
+                if result["step_log"] is not None:
+                    result["step_log"]["policy"] = policy_name
+                    result["step_log"]["policy_debug"] = debug
+            if should_render and result["step_log"] is not None:
+                frame = _draw_cup_ordering_frame(
+                    result["observation"],
+                    step_log=result["step_log"],
+                    title=f"{policy_name} episode {episode_index:03d} seed={seed}",
+                    background_frame=background_frame,
+                )
+                frame_path = _save_frame_png(frame, frame_dir / f"episode-{episode_index:03d}" / f"step-{result['step_log']['step_index']:03d}.png")
+                episode_frame_paths.append(str(frame_path))
+                _append_video_frame(video_writer, frame)
+            done = bool(result["done"])
+        summary = result["summary"]
+        episode_records.append(build_episode_record(summary, policy=policy_name, duration_sec=0.0))
+        sidecar_stem = f"{policy_name}-episode-{episode_index:03d}"
+        sidecar_payload = _build_episode_sidecar(
+            policy_name=policy_name,
+            summary=summary,
+            background_metadata=background_metadata,
+            frame_paths=episode_frame_paths,
+            video_output_path=str(resolved_video_path) if resolved_video_path is not None else None,
+        )
+        sidecar_path = _write_json(_cup_ordering_sidecar_path(config, dirs, sidecar_stem), sidecar_payload)
+        report_payload["episode_traces"].append(
+            {
+                "episode_id": summary["episode_id"],
+                "seed": seed,
+                "selected_order": summary["selected_order"],
+                "step_logs": summary["step_logs"],
+                "success": summary["success"],
+                "frame_paths": episode_frame_paths,
+                "sidecar_path": str(sidecar_path),
+                **background_metadata,
+            }
+        )
+        report_payload["sidecar_paths"].append(str(sidecar_path))
+
+    metrics_payload = aggregate_episode_records(
+        episode_records,
+        policy=policy_name,
+        episodes=int(episodes),
+        seed_start=int(seed_start),
+        max_targets=int(config["max_targets"]),
+        scene_config=scene_config,
+    )
+    metrics_path = write_ordering_metrics(
+        metrics_payload,
+        output_dir=dirs["metrics_dir"],
+        file_name=f"{policy_name}-episodes-{int(episodes)}.json",
+    )
+    report_path = None
+    if save_report:
+        report_stem = report_stem or f"{policy_name}-episodes-{int(episodes)}-trace"
+        report_path = _write_json(_cup_ordering_report_path(config, dirs, report_stem), report_payload)
+    if video_writer is not None:
+        video_writer.close()
+    return metrics_path, metrics_payload, report_path, resolved_video_path
+
+
+def _write_cup_ordering_train_artifact(config, step_count=None):
+    dirs = ensure_artifact_dirs(config)
+    resolved_steps = int(step_count if step_count is not None else config.get("max_targets", 5))
+    checkpoint_path = dirs["checkpoint_dir"] / f"cup-ordering-sanity-step-{resolved_steps}.ckpt.json"
+    payload = {
+        "mode": "cup_ordering",
+        "backend": config["backend"],
+        "task_name": config["task_name"],
+        "artifact_kind": config["policies"]["checkpoint_interface"]["artifact_kind"],
+        "schema_version": int(config["policies"]["checkpoint_interface"]["schema_version"]),
+        "action_space": f"Discrete({int(config['action_space']['n'])})",
+        "max_targets": int(config["max_targets"]),
+        "step_count": resolved_steps,
+        "sanity": True,
+        "supports_inference": False,
+        "unsupported_reason": "cup_ordering_sanity_artifact_has_no_model_weights",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    checkpoint_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return checkpoint_path
+
+
+def read_ordering_trace_report(config, policy_name, episodes):
+    dirs = ensure_artifact_dirs(config)
+    report_path = _cup_ordering_report_path(config, dirs, f"{policy_name}-episodes-{int(episodes)}-trace")
+    if not report_path.exists():
+        raise FileNotFoundError(f"Cup-ordering trace report not found: {report_path}")
+    return report_path
 
 
 def get_latest_checkpoint(config):
@@ -365,6 +1020,10 @@ def validate_and_summarize_config(config_path):
 
 def run_train_smoke(config_path, dry_run=False, steps=None):
     config = validate_rl_config(load_rl_config(config_path))
+    if _is_cup_ordering_config(config):
+        if not dry_run:
+            raise NotImplementedError("cup_ordering real training is not implemented yet; use --dry-run for sanity mode.")
+        return _write_cup_ordering_train_artifact(config, step_count=steps)
     if not dry_run:
         if PPO is None:
             raise ModuleNotFoundError("stable_baselines3 must be installed for real RL training.")
@@ -388,8 +1047,35 @@ def run_train_smoke(config_path, dry_run=False, steps=None):
     return write_smoke_checkpoint(config, step_count=steps)
 
 
-def run_eval_smoke(config_path, checkpoint_path, dry_run=False, render_override=None, save_video=False, video_path=None):
+def run_eval_smoke(config_path, checkpoint_path, dry_run=False, render_override=None, save_video=False, video_path=None, policy_name=None, episodes=None, seed=None):
     config = validate_rl_config(load_rl_config(config_path))
+    if _is_cup_ordering_config(config):
+        resolved_policy = str(policy_name or "random")
+        resolved_episodes = int(episodes if episodes is not None else config["eval"]["episodes_per_policy"])
+        resolved_seed = int(seed if seed is not None else config["eval"]["seed_set"][0])
+        checkpoint_metadata = None
+        if resolved_policy == "rl":
+            checkpoint_metadata = inspect_cup_ordering_checkpoint_artifact(checkpoint_path)
+            if checkpoint_metadata.get("policy_mode") == "checkpoint" and not checkpoint_metadata.get("supports_inference"):
+                raise RuntimeError(
+                    "Cup-ordering checkpoint interface is reserved but dry-run eval cannot execute real inference: "
+                    f"{checkpoint_metadata.get('unsupported_reason')} ({checkpoint_metadata.get('checkpoint_path')})"
+                )
+        report_stem = f"{resolved_policy}-episodes-{resolved_episodes}-trace"
+        metrics_path, _, _, _ = _run_cup_ordering_dry_run(
+            config,
+            policy_name=resolved_policy,
+            episodes=resolved_episodes,
+            seed_start=resolved_seed,
+            save_report=True,
+            report_stem=report_stem,
+            render_override=render_override,
+            save_video=save_video,
+            video_path=video_path,
+            checkpoint_path=checkpoint_path,
+            checkpoint_metadata=checkpoint_metadata,
+        )
+        return metrics_path
     checkpoint = Path(checkpoint_path)
     if not checkpoint.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")

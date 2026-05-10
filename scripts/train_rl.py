@@ -22,6 +22,7 @@ def build_parser():
     parser.add_argument("--dry-run", action="store_true", help="Run contract-only smoke training")
     parser.add_argument("--steps", type=int, default=None, help="Override smoke step count")
     parser.add_argument("--timesteps", type=int, default=None, help="Override real PPO training timesteps")
+    parser.add_argument("--seed", type=int, default=None, help="Override starting seed for cup-ordering sanity mode")
     parser.add_argument("--print-summary", action="store_true", help="Print resolved config summary and exit")
     return parser
 
@@ -29,7 +30,13 @@ def build_parser():
 def main():
     args = build_parser().parse_args()
     if args.print_summary:
-        print(validate_and_summarize_config(args.config))
+        summary = validate_and_summarize_config(args.config)
+        if args.dry_run:
+            summary = dict(summary)
+            summary["sanity"] = True
+            if args.seed is not None:
+                summary["seed"] = int(args.seed)
+        print(summary)
         return 0
     override_steps = args.timesteps if args.timesteps is not None else args.steps
     checkpoint_path = run_train_smoke(args.config, dry_run=args.dry_run, steps=override_steps)

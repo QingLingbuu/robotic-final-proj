@@ -6,7 +6,7 @@ def should_retry_with_preposition(
     reachability_diagnosis,
     candidate,
     final_error_threshold=0.03,
-    allowed_grasp_types=("top_down",),
+    allowed_grasp_types=("top_down", "handle_top_down"),
 ):
     if reach_summary.get("reach_success"):
         return False

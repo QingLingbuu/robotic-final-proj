@@ -1,0 +1,53 @@
+mode: cup_ordering
+task_name: robocasa/CupMugSorting
+backend: robocasa
+max_targets: 5
+action_space:
+  type: discrete
+  n: 5
+scene:
+  layout_and_style_ids:
+    - [1, 1]
+  num_mugs: 2
+  num_cups: 3
+ordering:
+  handled_strategy: handle_top_down
+  plain_strategy: top_down
+  handled_zone: sink
+  plain_zone: right_counter
+policies:
+  baselines:
+    - random
+    - greedy
+  rl_sanity: rl
+  checkpoint_interface:
+    artifact_kind: cup_ordering_policy_checkpoint
+    schema_version: 1
+    supports_inference: true
+    unsupported_reason: cup_ordering_checkpoint_requires_stable_baselines3_runtime
+reward:
+  coefficients:
+    correct_zone_place: 5.0
+    selected_target_success: 2.0
+    grasp_failure: -2.0
+    placement_failure: -2.0
+    invalid_action: -3.0
+    retry_penalty: -0.5
+    timeout: -3.0
+    collision: -5.0
+    all_invalid: -4.0
+eval:
+  episodes_per_policy: 30
+  seed_set:
+    - 7
+    - 11
+    - 42
+artifacts:
+  root_dir: outputs/rl_cup_mug_ordering
+  checkpoint_dir: checkpoints
+  metrics_dir: metrics
+  report_dir: reports
+  video_dir: videos
+render:
+  enabled: false
+  mode: human
