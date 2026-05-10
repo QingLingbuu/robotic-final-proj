@@ -36,6 +36,13 @@ reward:
     timeout: -3.0
     collision: -5.0
     all_invalid: -4.0
+train:
+  smoke_steps: 5
+  checkpoint_every: 64
+  total_timesteps: 2048
+  n_steps: 64
+  progress_print_freq: 128
+  allowed_failed_attempts: 2
 eval:
   episodes_per_policy: 30
   seed_set:

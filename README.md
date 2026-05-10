@@ -1,116 +1,171 @@
-这是针对 **V3.0 Final** 版本进行的最后两项关键优化补充。至此，你的 `guide.md` 已经完全覆盖了从物理公式、逻辑架构到跨进程通信和实验分析的所有细节。
+# Semantic-Driven Cup/Mug Ordering Demo
 
-以下是最终补齐后的完整版，可以直接作为你们项目的**官方开发手册**。
+This repository contains our RoboCasa-based cup and mug ordering pipeline for perception, policy selection, live execution, and report figure generation.
 
----
+This README is written as an **application-facing walkthrough** for instructors, TAs, and project reviewers. It no longer serves as a development-rules document.
 
-# 🤖 语义驱动双臂协作桌面整理系统 - 开发执行手册 (V3.1 Final)
+## What This Project Demonstrates
 
-> 当前平台策略：项目目标保持为 **RoboCasa 风格家庭/桌面整理任务**，但现阶段优先基于 **robosuite** 完成感知、IPC、FSM 与执行链路的联调。
-> 需要注意：**robosuite/mink 基线** 与 **RoboCasa/RL 基线** 现在应视为两个独立环境；真实 RoboCasa 安装已拉入 `numpy 2.2.5`、`torch 2.7.1`、`torchvision 0.22.1`、`gymnasium 0.29.1`，而 `mink 0.0.5` 需要 `numpy<2.0.0`。
-> 在核心流程稳定后，再迁移环境层到 **RoboCasa**。迁移时优先复用既有接口，尤其保持 `vision/`、`ipc/`、`fsm/` 和 `logs/` 的协议稳定。
+- Multi-object cup/mug perception in RoboCasa
+- Policy-based ordering decisions over five drinkware targets
+- Live execution in a RoboCasa environment
+- RL training, evaluation, and report figure generation
 
-## 1. 系统架构与 3D 感知协议
+## Recommended Environment
 
-### 1.1 3D 坐标反投影参考实现 (数学对齐)
-感知组必须确保 `pos` 的计算符合以下针孔相机模型变换。
+Use the project environment that already contains the RoboCasa and RL dependencies.
 
-**核心公式：**
-给定像素坐标 $(u, v)$ 和深度 $d$，计算相机坐标系下的 $P_{cam} = [X_c, Y_c, Z_c]^T$：
-$$X_c = \frac{(u - c_x) \cdot d}{f_x}, \quad Y_c = \frac{(v - c_y) \cdot d}{f_y}, \quad Z_c = d$$
-随后利用外参矩阵 $T_{world\_cam}$ 变换至世界坐标系：
-$$P_{world} = R_{wc} \cdot P_{cam} + t_{wc}$$
+Example:
 
-### 1.2 异步感知与 Queue 通信 (规范对齐)
-为保证 FSM 逻辑不被重型感知模型（GroundingDINO）阻塞，采用 `multiprocessing.Queue` 的异步通信方案（队列名固定为 `perception_queue`）。
-
-**参考实现架构：**
-```python
-from multiprocessing import Queue
-from queue import Empty
-
-# 全局队列命名约定
-perception_queue = Queue(maxsize=8)
-
-# --- 感知组 (写入进程) ---
-detected_objects = {
-    "target": {"label": "knife", "pos": [x, y, z], "conf": 0.95, "timestamp": ts},
-    "obstacles": [{"label": "cup", "pos": [x, y, z], "id": 101}],
-    "status": "ready",
-}
-perception_queue.put(detected_objects)
-
-# --- 逻辑组 (读取进程) ---
-try:
-    detected_objects = perception_queue.get(timeout=0.2)
-except Empty:
-    # stale data -> FSM 进入 RETRY_SENSING
-    detected_objects = None
+```cmd
+conda activate robotic-robocasa-rl
 ```
 
----
+If your local machine can already run the existing RoboCasa demos in this repository, you can use the same environment for the commands below.
 
-## 2. 增强型有限状态机 (FSM) 与降级逻辑
+## Quick Demo Commands
 
-### 2.1 状态转换表 (含降级路径)
+### 1. Online Greedy Demo in RoboCasa
 
-| 状态 | 转移条件 | 异常处理 (Exception) | 降级路径 (Fallback) |
-| :--- | :--- | :--- | :--- |
-| **IDLE** | 接收指令 -> **PLANNING** | - | - |
-| **PLANNING** | 目标锁定 -> **CLEARING** | 目标丢失 -> **RETRY_SENSING** | 3次丢失 -> **FAILED** -> **IDLE** |
-| **CLEARING** | 助手臂完成 -> **PLANNING** | 障碍物未动 -> **RETRY_PUSH** | 2次无效 -> **FAILED** -> **RESET** |
-| **GRASPING** | 夹爪闭合 -> **VERIFYING** | 机械臂碰撞 -> **EMERGENCY** | - |
-| **VERIFYING** | 抓取成功 -> **SUCCESS** | 抓空 (Width < limit) -> **RETRY_GRASP**| 2次抓空 -> **FAILED** -> **IDLE** |
+This opens the live RoboCasa environment and runs the online cup/mug ordering loop with the greedy policy.
 
----
-
-## 3. 统一接口标准 (Standard Protocols)
-
-### 3.1 3D 感知字典定义
-```python
-detected_objects = {
-    "target": {"label": "knife", "pos": [x, y, z], "conf": 0.95, "timestamp": 1713200000.12},
-    "obstacles": [{"label": "cup", "pos": [x, y, z], "id": 101}],
-    "status": "ready" # 'ready', 'processing', 'error'
-}
+```cmd
+python scripts/demo_online_cup_mug_ordering.py --policy greedy --layout 1 --style 1 --save-trace --keep-open-sec 1
 ```
 
----
+### 2. Online RL Demo in RoboCasa with a Trained Checkpoint
 
-## 4. 实验评估与 Failure Mode 分类
+Replace the checkpoint path if you trained a different model.
 
-为了在期末报告中提供更有深度的分析，实验组需按照下表统计失败原因：
+```cmd
+python scripts/demo_online_cup_mug_ordering.py --policy rl --rl-policy-mode checkpoint --rl-checkpoint outputs/rl_cup_mug_ordering/checkpoints/cup-ordering-ppo-102400.zip --layout 1 --style 1 --save-trace --keep-open-sec 1
+```
 
-### 4.1 故障模式分析表 (Failure Mode Analysis)
-| 故障类别 | 判定条件 | 计数 (Count) | 优化方向 |
-| :--- | :--- | :--- | :--- |
-| **感知误差 (Perception Error)** | `RETRY_SENSING` 触发 | $N_1$ | 检查手眼标定、光照、遮挡逻辑 |
-| **执行偏离 (Execution Drift)** | `RETRY_PUSH` 触发 | $N_2$ | 优化 OSC 控制参数或减小步长 |
-| **物理滑落 (Physical Slip)** | `RETRY_GRASP` 触发 | $N_3$ | 增加摩擦力系数或调整抓取位姿 |
+## End-to-End RL Workflow
 
----
+The full workflow is:
 
-## 5. 开发里程碑 (Milestones)
+1. Train an RL checkpoint
+2. Run real RoboCasa evaluation
+3. Generate report figures
 
-1.  **T+3天 (Interface Demo)**：完成反投影数学模型校准，环境能同时渲染 RGB 和 Depth。
-2.  **T+7天 (Vision-Loop)**：实现基于 `perception_queue` 的异步感知流，完成单臂抓取实验。
-3.  **T+12天 (Final Evaluation)**：完成 RoboCasa 双臂协作任务测试，导出故障分类统计表。
+### Step 1. Train the RL Policy
 
----
+Example with `102400` training timesteps:
 
-## 6. 技术规约汇总
-*   **坐标系**：统一 World Frame。
-*   **并发控制**：感知与控制异步。
-*   **延迟要求**：感知端到端 < 200ms。
-*   **显存管理**：针对 8GB 显存，仿真分辨率限制在 512x512，开启推理模式。
+```cmd
+python scripts/train_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --timesteps 102400
+```
 
----
+Main outputs:
 
-### 🚀 今日行动建议
-1.  **感知组**：将 `perception_queue` 写入逻辑集成到 GroundingDINO 推理脚本中。
-2.  **执行组**：测试 `arm_safe_retract()`，确保任何时候调用都能让手臂瞬间回到初始待机点。
-3.  **逻辑组**：在 FSM 中加入 `Counter` 变量，用于记录 Failure Mode 中的三类 RETRY 次数。
+- Checkpoint: `outputs/rl_cup_mug_ordering/checkpoints/cup-ordering-ppo-102400.zip`
+- Training history: `outputs/rl_cup_mug_ordering/metrics/cup_ordering-train-history-102400.json`
 
----
-**手册版本：V3.1 (Final Release)**
-**状态：已冻结，禁止未经全组讨论的重大接口变更。**
+### Step 2. Smoke Test Real RoboCasa Evaluation
+
+Before batch evaluation, run one real-environment episode:
+
+```cmd
+python scripts/eval_rl_real_cup_mug_ordering.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy rl --rl-policy-mode checkpoint --checkpoint outputs/rl_cup_mug_ordering/checkpoints/cup-ordering-ppo-102400.zip --episodes 1 --seed-start 7 --save-report
+```
+
+If this succeeds, continue with multi-episode evaluation.
+
+### Step 3. Run Real RoboCasa Evaluation
+
+For a fast report pass, we recommend `10` episodes per policy.
+
+#### Random baseline
+
+```cmd
+python scripts/eval_rl_real_cup_mug_ordering.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy random --episodes 10 --seed-start 7 --save-report
+```
+
+#### Greedy baseline
+
+```cmd
+python scripts/eval_rl_real_cup_mug_ordering.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy greedy --episodes 10 --seed-start 7 --save-report
+```
+
+#### RL checkpoint policy
+
+```cmd
+python scripts/eval_rl_real_cup_mug_ordering.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy rl --rl-policy-mode checkpoint --checkpoint outputs/rl_cup_mug_ordering/checkpoints/cup-ordering-ppo-102400.zip --episodes 10 --seed-start 7 --save-report
+```
+
+Main outputs:
+
+- `outputs/rl_cup_mug_ordering/metrics/random-real-episodes-10.json`
+- `outputs/rl_cup_mug_ordering/metrics/greedy-real-episodes-10.json`
+- `outputs/rl_cup_mug_ordering/metrics/rl-real-episodes-10.json`
+
+And matching trace reports under:
+
+- `outputs/rl_cup_mug_ordering/reports/`
+
+## Report Figure Generation
+
+The plotting script consumes:
+
+- real-environment evaluation metrics for `random`, `greedy`, and `rl`
+- the RL training history JSON
+
+Example:
+
+```cmd
+python scripts/plot_cup_mug_ordering_report.py --random-metrics outputs/rl_cup_mug_ordering/metrics/random-real-episodes-10.json --greedy-metrics outputs/rl_cup_mug_ordering/metrics/greedy-real-episodes-10.json --rl-metrics outputs/rl_cup_mug_ordering/metrics/rl-real-episodes-10.json --train-history outputs/rl_cup_mug_ordering/metrics/cup_ordering-train-history-102400.json
+```
+
+Generated figures are written to:
+
+- `outputs/rl_cup_mug_ordering/figures/`
+
+Current figure set:
+
+- `completion_count_histogram.png`
+- `cumulative_mean_completion_ratio.png`
+- `cumulative_full_success_rate.png`
+- `rl_training_loss_curves.png`
+
+If the training history contains reward statistics in the future, the plotting pipeline can also include an RL reward curve automatically.
+
+## Suggested Minimal Demonstration for Review
+
+If time is limited, use this compact sequence:
+
+1. Train a checkpoint
+
+```cmd
+python scripts/train_rl.py --config configs/rl/cup_mug_ordering_robocasa.yaml --timesteps 102400
+```
+
+2. Verify one real RL episode
+
+```cmd
+python scripts/eval_rl_real_cup_mug_ordering.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy rl --rl-policy-mode checkpoint --checkpoint outputs/rl_cup_mug_ordering/checkpoints/cup-ordering-ppo-102400.zip --episodes 1 --seed-start 7 --save-report
+```
+
+3. Run `10` episodes for each policy
+
+```cmd
+python scripts/eval_rl_real_cup_mug_ordering.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy random --episodes 10 --seed-start 7 --save-report
+python scripts/eval_rl_real_cup_mug_ordering.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy greedy --episodes 10 --seed-start 7 --save-report
+python scripts/eval_rl_real_cup_mug_ordering.py --config configs/rl/cup_mug_ordering_robocasa.yaml --policy rl --rl-policy-mode checkpoint --checkpoint outputs/rl_cup_mug_ordering/checkpoints/cup-ordering-ppo-102400.zip --episodes 10 --seed-start 7 --save-report
+```
+
+4. Generate the final figures
+
+```cmd
+python scripts/plot_cup_mug_ordering_report.py --random-metrics outputs/rl_cup_mug_ordering/metrics/random-real-episodes-10.json --greedy-metrics outputs/rl_cup_mug_ordering/metrics/greedy-real-episodes-10.json --rl-metrics outputs/rl_cup_mug_ordering/metrics/rl-real-episodes-10.json --train-history outputs/rl_cup_mug_ordering/metrics/cup_ordering-train-history-102400.json
+```
+
+## Notes for Reviewers
+
+- The root `README.md` now focuses on **how to run the project workflow** rather than internal development conventions.
+- Runtime outputs, traces, figures, and evaluation artifacts are written under `outputs/rl_cup_mug_ordering/`.
+- The most important assets for grading or inspection are:
+  - trained checkpoint
+  - real-environment metrics JSON
+  - trace reports
+  - generated report figures

@@ -279,6 +279,96 @@ class RLVectorEnvAdapter(GymEnvBase):
             env.close()
 
 
+class CupOrderingTrainEnv(GymEnvBase):
+    """Minimal discrete-action PPO environment for cup-ordering policy training."""
+
+    metadata = {"render_modes": ["rgb_array"], "render_fps": 4}
+
+    def __init__(self, config):
+        try:
+            from gymnasium import spaces
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError("gymnasium must be installed for cup-ordering PPO training.") from exc
+
+        self._config = config
+        self._max_targets = int(config["max_targets"])
+        self._action_count = int(config["action_space"]["n"])
+        self._seed_index = 0
+        self._episode_seed = None
+        self._rng = random.Random()
+        self._last_observation = None
+        self._runner = CupMugOrderingEpisodeRunner(
+            build_cup_mug_ordering_observation,
+            self._training_executor,
+            reward_weights=config["reward"]["coefficients"],
+            allowed_failed_attempts=int(config.get("train", {}).get("allowed_failed_attempts", 2)),
+            max_targets=self._max_targets,
+        )
+        bootstrap_seed = int(config["eval"]["seed_set"][0])
+        bootstrap_observation = self._reset_episode(bootstrap_seed)
+        bootstrap_vector = flatten_cup_ordering_observation(bootstrap_observation)
+        self.observation_space = spaces.Box(
+            low=-np.inf,
+            high=np.inf,
+            shape=bootstrap_vector.shape,
+            dtype=np.float32,
+        )
+        self.action_space = spaces.Discrete(self._action_count)
+
+    def reset(self, seed=None, options=None):
+        del options
+        if seed is None:
+            seed_set = list(self._config["eval"]["seed_set"])
+            seed = int(seed_set[self._seed_index % len(seed_set)])
+            self._seed_index += 1
+        observation = self._reset_episode(int(seed))
+        return flatten_cup_ordering_observation(observation), {"seed": int(seed)}
+
+    def step(self, action):
+        resolved_action = int(np.asarray(action).reshape(-1)[0])
+        result = self._runner.step(resolved_action)
+        observation = result["observation"]
+        self._last_observation = observation
+        info = {
+            "success": bool(result["success"]),
+            "failure_type": result["failure_type"],
+            "step_log": result["step_log"],
+        }
+        if result["summary"] is not None:
+            info["episode_summary"] = result["summary"]
+        return flatten_cup_ordering_observation(observation), float(result["reward"]), bool(result["done"]), False, info
+
+    def render(self):
+        if self._last_observation is None:
+            return None
+        frame = _draw_cup_ordering_frame(
+            self._last_observation,
+            title=f"cup_ordering train seed={self._episode_seed}",
+        )
+        return np.asarray(frame)
+
+    def close(self):
+        return None
+
+    def _reset_episode(self, seed):
+        self._episode_seed = int(seed)
+        self._rng.seed(self._episode_seed)
+        targets, assignments = _cup_ordering_fixture(self._episode_seed)
+        observation = self._runner.reset(
+            targets,
+            assignments=assignments,
+            sorting_metadata=_cup_ordering_sorting_metadata(),
+            episode_id=f"train-seed-{self._episode_seed}",
+            seed=self._episode_seed,
+        )
+        self._last_observation = observation
+        return observation
+
+    def _training_executor(self, slot, observation, step_index):
+        del observation
+        return _simulate_cup_ordering_execution(slot, step_index, self._rng)
+
+
 def build_selector_observation(payload, fsm_state, max_candidates):
     """Build a padded, selector-friendly observation from a perception payload."""
     candidates = list((payload or {}).get("grasp_candidates") or [])
@@ -319,8 +409,27 @@ class ProgressCallback(BaseCallback):
     def __init__(self, print_freq):
         super().__init__()
         self.print_freq = max(int(print_freq), 1)
+        self.history = []
 
     def _on_step(self) -> bool:
+        logger_values = dict(getattr(self.logger, "name_to_value", {}) or {})
+        record = {"timesteps": int(self.num_timesteps)}
+        for key in (
+            "rollout/ep_len_mean",
+            "rollout/ep_rew_mean",
+            "train/approx_kl",
+            "train/clip_fraction",
+            "train/entropy_loss",
+            "train/explained_variance",
+            "train/learning_rate",
+            "train/loss",
+            "train/policy_gradient_loss",
+            "train/value_loss",
+        ):
+            value = logger_values.get(key)
+            record[key] = None if value is None else float(value)
+        if any(value is not None for key, value in record.items() if key != "timesteps"):
+            self.history.append(record)
         if self.num_timesteps % self.print_freq == 0:
             print(f"[train] timesteps={self.num_timesteps}", flush=True)
         return True
@@ -418,19 +527,39 @@ def _cup_ordering_fixture(seed):
     return targets, assignments
 
 
-def _cup_ordering_executor(slot, observation, step_index):
+def _simulate_cup_ordering_execution(slot, step_index, rng):
+    candidate_score = float(slot.get("candidate_score", 0.0) or 0.0)
+    confidence = float(slot.get("conf", 0.0) or 0.0)
+    reachability = float(slot.get("reachability", 0.0) or 0.0)
+    retry_count = int(slot.get("retry_count", 0) or 0)
+    handle_bonus = 0.08 if bool(slot.get("has_handle")) and int(step_index) < 2 else 0.0
+    success_score = (0.45 * candidate_score) + (0.30 * confidence) + (0.25 * reachability) + handle_bonus
+    success_score -= 0.12 * retry_count
+    success_probability = max(0.05, min(0.98, success_score))
+    sampled_success = rng.random() < success_probability
+    failure_type = None
+    if not sampled_success:
+        failure_type = "grasp_failure" if candidate_score < 0.75 or reachability < 0.7 else "placement_failure"
     return {
-        "low_level_success": True,
-        "correct_zone": True,
-        "failure_type": None,
+        "low_level_success": sampled_success,
+        "correct_zone": sampled_success,
+        "failure_type": failure_type,
         "trace": {
             "selected_slot": int(slot["slot_index"]),
             "object_id": slot.get("object_id"),
             "step_index": int(step_index),
+            "success_probability": round(success_probability, 4),
+            "sampled_success": bool(sampled_success),
             "grasp_strategy": slot.get("recommended_grasp"),
             "place_zone": slot.get("place_zone_id"),
         },
     }
+
+
+def _cup_ordering_executor(slot, observation, step_index):
+    del observation
+    rng = random.Random(int(step_index) + int(slot.get("slot_index", 0)))
+    return _simulate_cup_ordering_execution(slot, step_index, rng)
 
 
 def _cup_ordering_rl_action(observation, seed, step_index):
@@ -848,13 +977,14 @@ def _run_cup_ordering_dry_run(
     seeds = [int(seed_start) + index for index in range(int(episodes))]
     for episode_index, seed in enumerate(seeds, start=1):
         targets, assignments = _cup_ordering_fixture(seed)
+        episode_rng = random.Random(int(seed))
         background_frame = None
         background_metadata = {"frame_source": "synthetic_fallback", "real_render_error": None}
         if should_render:
             background_frame, background_metadata = _try_capture_real_cup_ordering_background_frame(config, seed=seed)
         runner = CupMugOrderingEpisodeRunner(
             build_cup_mug_ordering_observation,
-            _cup_ordering_executor,
+            lambda slot, observation, step_index, rng=episode_rng: _simulate_cup_ordering_execution(slot, step_index, rng),
             reward_weights=config["reward"]["coefficients"],
             allowed_failed_attempts=0,
             max_targets=int(config["max_targets"]),
@@ -961,6 +1091,38 @@ def _write_cup_ordering_train_artifact(config, step_count=None):
     return checkpoint_path
 
 
+def _write_cup_ordering_training_summary(config, checkpoint_path, total_timesteps):
+    dirs = ensure_artifact_dirs(config)
+    summary_path = dirs["metrics_dir"] / f"cup-ordering-train-{int(total_timesteps)}.json"
+    payload = {
+        "mode": "cup_ordering",
+        "backend": config["backend"],
+        "task_name": config["task_name"],
+        "checkpoint_path": str(checkpoint_path),
+        "total_timesteps": int(total_timesteps),
+        "n_steps": int(config["train"]["n_steps"]),
+        "seed_set": list(config["eval"]["seed_set"]),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    summary_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return summary_path
+
+
+def _write_training_history(config, total_timesteps, callback, mode="generic"):
+    dirs = ensure_artifact_dirs(config)
+    history_path = dirs["metrics_dir"] / f"{mode}-train-history-{int(total_timesteps)}.json"
+    payload = {
+        "mode": mode,
+        "task_name": config["task_name"],
+        "backend": config["backend"],
+        "total_timesteps": int(total_timesteps),
+        "records": list(getattr(callback, "history", []) or []),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    history_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return history_path
+
+
 def read_ordering_trace_report(config, policy_name, episodes):
     dirs = ensure_artifact_dirs(config)
     report_path = _cup_ordering_report_path(config, dirs, f"{policy_name}-episodes-{int(episodes)}-trace")
@@ -1022,7 +1184,28 @@ def run_train_smoke(config_path, dry_run=False, steps=None):
     config = validate_rl_config(load_rl_config(config_path))
     if _is_cup_ordering_config(config):
         if not dry_run:
-            raise NotImplementedError("cup_ordering real training is not implemented yet; use --dry-run for sanity mode.")
+            if PPO is None:
+                raise ModuleNotFoundError("stable_baselines3 must be installed for cup-ordering PPO training.")
+            env = CupOrderingTrainEnv(config)
+            dirs = ensure_artifact_dirs(config)
+            total_timesteps = int(config["train"].get("total_timesteps", config["train"]["smoke_steps"]))
+            if steps is not None:
+                total_timesteps = int(steps)
+            n_steps = int(config["train"].get("n_steps", 64))
+            progress_print_freq = int(config["train"].get("progress_print_freq", 20))
+            print(
+                f"[train] mode=cup_ordering task={config['task_name']} total_timesteps={total_timesteps} n_steps={n_steps}",
+                flush=True,
+            )
+            progress_callback = ProgressCallback(progress_print_freq)
+            model = PPO("MlpPolicy", cast(Any, env), verbose=1, n_steps=n_steps)
+            model.learn(total_timesteps=total_timesteps, callback=cast(Any, progress_callback))
+            checkpoint_path = dirs["checkpoint_dir"] / f"cup-ordering-ppo-{total_timesteps}.zip"
+            model.save(str(checkpoint_path))
+            env.close()
+            _write_cup_ordering_training_summary(config, checkpoint_path, total_timesteps)
+            _write_training_history(config, total_timesteps, progress_callback, mode="cup_ordering")
+            return checkpoint_path
         return _write_cup_ordering_train_artifact(config, step_count=steps)
     if not dry_run:
         if PPO is None:
@@ -1038,11 +1221,13 @@ def run_train_smoke(config_path, dry_run=False, steps=None):
             f"[train] backend={config['backend']} task={config['task_name']} total_timesteps={total_timesteps} n_steps={n_steps}",
             flush=True,
         )
+        progress_callback = ProgressCallback(progress_print_freq)
         model = PPO("MlpPolicy", cast(Any, env), verbose=1, n_steps=n_steps)
-        model.learn(total_timesteps=total_timesteps, callback=cast(Any, ProgressCallback(progress_print_freq)))
+        model.learn(total_timesteps=total_timesteps, callback=cast(Any, progress_callback))
         checkpoint_path = dirs["checkpoint_dir"] / f"{config['task_name']}-ppo-{total_timesteps}.zip"
         model.save(str(checkpoint_path))
         env.close()
+        _write_training_history(config, total_timesteps, progress_callback, mode="generic")
         return checkpoint_path
     return write_smoke_checkpoint(config, step_count=steps)
 

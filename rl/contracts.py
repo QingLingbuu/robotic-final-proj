@@ -43,6 +43,7 @@ CUP_ORDERING_REQUIRED_TOP_LEVEL_KEYS = {
     "ordering",
     "policies",
     "reward",
+    "train",
     "eval",
     "artifacts",
     "render",
@@ -148,6 +149,7 @@ def _validate_cup_ordering_config(config):
         CUP_ORDERING_REQUIRED_CHECKPOINT_INTERFACE_KEYS,
     )
     _ensure_keys("reward", config["reward"], REQUIRED_REWARD_KEYS)
+    _ensure_keys("train", config["train"], REQUIRED_TRAIN_KEYS)
     _ensure_keys("eval", config["eval"], CUP_ORDERING_REQUIRED_EVAL_KEYS)
     _ensure_keys("artifacts", config["artifacts"], CUP_ORDERING_REQUIRED_ARTIFACT_KEYS)
     _ensure_keys("render", config["render"], REQUIRED_RENDER_KEYS)
@@ -209,6 +211,14 @@ def _validate_cup_ordering_config(config):
     normalized["action_space"]["n"] = int(normalized["action_space"]["n"])
     normalized["scene"]["num_mugs"] = int(normalized["scene"]["num_mugs"])
     normalized["scene"]["num_cups"] = int(normalized["scene"]["num_cups"])
+    normalized["train"]["smoke_steps"] = int(normalized["train"]["smoke_steps"])
+    normalized["train"]["checkpoint_every"] = int(normalized["train"]["checkpoint_every"])
+    normalized["train"]["n_steps"] = int(normalized["train"]["n_steps"])
+    normalized["train"]["progress_print_freq"] = int(normalized["train"]["progress_print_freq"])
+    if "total_timesteps" in normalized["train"]:
+        normalized["train"]["total_timesteps"] = int(normalized["train"]["total_timesteps"])
+    if "allowed_failed_attempts" in normalized["train"]:
+        normalized["train"]["allowed_failed_attempts"] = int(normalized["train"]["allowed_failed_attempts"])
     normalized["eval"]["episodes_per_policy"] = int(normalized["eval"]["episodes_per_policy"])
     normalized["policies"]["checkpoint_interface"]["schema_version"] = int(
         normalized["policies"]["checkpoint_interface"]["schema_version"]
@@ -277,6 +287,7 @@ def summarize_rl_config(config):
             "policies": deepcopy(config["policies"]),
             "checkpoint_interface": deepcopy(config["policies"]["checkpoint_interface"]),
             "reward_terms": sorted(config["reward"]["coefficients"].keys()),
+            "train": deepcopy(config["train"]),
             "episodes_per_policy": int(config["eval"]["episodes_per_policy"]),
             "seed_set": list(config["eval"]["seed_set"]),
             "render_enabled": bool(config["render"]["enabled"]),

@@ -83,6 +83,7 @@ class RLContractTests(unittest.TestCase):
         self.assertEqual(summary["checkpoint_interface"]["artifact_kind"], "cup_ordering_policy_checkpoint")
         self.assertTrue(summary["checkpoint_interface"]["supports_inference"])
         self.assertIn("correct_zone_place", summary["reward_terms"])
+        self.assertEqual(summary["train"]["total_timesteps"], 2048)
         self.assertEqual(summary["episodes_per_policy"], 30)
 
     def test_selector_contract_summary_is_available_when_configured(self):
@@ -330,6 +331,66 @@ class RLContractTests(unittest.TestCase):
                 policy_name="rl",
                 episodes=1,
             )
+
+    def test_cup_ordering_real_train_uses_discrete_env_and_saves_zip(self):
+        if rl_harness.gym is None:
+            self.skipTest("gymnasium not installed")
+
+        class FakeModel:
+            def __init__(self):
+                self.learn_calls = []
+                self.saved_paths = []
+
+            def learn(self, total_timesteps, callback=None):
+                self.learn_calls.append((int(total_timesteps), callback))
+                return self
+
+            def save(self, path):
+                self.saved_paths.append(path)
+                Path(path).write_bytes(b"fake-ppo")
+
+        class FakePPO:
+            init_calls = []
+            model = FakeModel()
+
+            def __init__(self, policy, env, verbose=0, n_steps=64):
+                FakePPO.init_calls.append(
+                    {
+                        "policy": policy,
+                        "env_type": type(env).__name__,
+                        "verbose": int(verbose),
+                        "n_steps": int(n_steps),
+                    }
+                )
+
+            def learn(self, total_timesteps, callback=None):
+                return FakePPO.model.learn(total_timesteps=total_timesteps, callback=callback)
+
+            def save(self, path):
+                return FakePPO.model.save(path)
+
+        original_ppo = rl_harness.PPO
+        try:
+            rl_harness.PPO = FakePPO
+            checkpoint_path = run_train_smoke(CUP_MUG_ORDERING_CONFIG_PATH, dry_run=False, steps=32)
+        finally:
+            rl_harness.PPO = original_ppo
+
+        self.assertTrue(checkpoint_path.exists())
+        self.assertEqual(checkpoint_path.suffix, ".zip")
+        self.assertIn("cup-ordering-ppo-32", checkpoint_path.name)
+        self.assertEqual(FakePPO.init_calls[0]["policy"], "MlpPolicy")
+        self.assertEqual(FakePPO.init_calls[0]["env_type"], "CupOrderingTrainEnv")
+        self.assertEqual(FakePPO.init_calls[0]["n_steps"], 64)
+        self.assertEqual(FakePPO.model.learn_calls[0][0], 32)
+        self.assertTrue(FakePPO.model.saved_paths)
+        metrics_path = PROJECT_ROOT / "outputs" / "rl_cup_mug_ordering" / "metrics" / "cup-ordering-train-32.json"
+        self.assertTrue(metrics_path.exists())
+        payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+        self.assertEqual(payload["mode"], "cup_ordering")
+        self.assertEqual(payload["total_timesteps"], 32)
+        checkpoint_path.unlink(missing_ok=True)
+        metrics_path.unlink(missing_ok=True)
 
     def test_cup_ordering_observation_flattens_to_stable_vector(self):
         observation = {
